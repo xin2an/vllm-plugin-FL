@@ -123,6 +123,7 @@ if TYPE_CHECKING:
 
 from vllm_fl.compilation.graph import GraphWrapper
 from vllm_fl.attention.attention import AttentionMetadata
+from vllm_fl.utils import is_npu
 
 
 logger = init_logger(__name__)
@@ -2464,6 +2465,9 @@ class ModelRunnerFL(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             kv_connector_output=kv_connector_output,
             num_nans_in_logits=num_nans_in_logits,
         )
+        # NPU: directly return output (async scheduling not supported yet)
+        if is_npu():
+            return output
 
         ### TODO(lms): support async schedule
         if not self.use_async_scheduling:
@@ -4188,6 +4192,14 @@ class ModelRunnerFL(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         # this is in the critical path of every single model
         # forward loop, this has caused perf issue for a disagg
         # setup.
+        #
+        # NOTE(FL): On NPU platform, async copy from NPU to CPU pinned memory
+        # can cause memory corruption (malloc_consolidate unaligned fastbin).
+        # Use synchronous transfer instead for NPU compatibility.
+        from vllm.platforms import current_platform
+        if current_platform.device_type == "npu":
+            return sampled_token_ids.cpu().tolist()
+
         pinned = self.sampled_token_ids_pinned_cpu[:sampled_token_ids.shape[0]]
         pinned.copy_(sampled_token_ids, non_blocking=True)
         self.transfer_event.record()

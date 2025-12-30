@@ -7,8 +7,9 @@
 import copy
 import gc
 import os
-from contextlib import AbstractContextManager, nullcontext
-from typing import TYPE_CHECKING, Any, Optional, Union
+from contextlib import AbstractContextManager, nullcontext, contextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Generator, Optional, Union
 
 import torch
 import torch.distributed
@@ -28,7 +29,7 @@ from vllm.model_executor.warmup.kernel_warmup import kernel_warmup
 from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
-from vllm.utils import GiB_bytes, MemorySnapshot, memory_profiling
+from vllm.utils import GiB_bytes
 from vllm.v1.engine import ReconfigureDistributedRequest, ReconfigureRankType
 from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
 from vllm.v1.outputs import (EMPTY_MODEL_RUNNER_OUTPUT, AsyncModelRunnerOutput,
@@ -45,8 +46,122 @@ if TYPE_CHECKING:
 
 from vllm_fl.worker.model_runner import ModelRunnerFL
 from vllm_fl.ops.custom_ops import register_oot_ops
+from vllm_fl.utils import is_npu, is_cuda
 
 import flag_gems
+
+
+# ============================================================================
+# Platform-agnostic memory profiling utilities
+# ============================================================================
+
+@dataclass
+class MemorySnapshot:
+    """Platform-agnostic memory snapshot for FL worker."""
+    torch_peak: int = 0
+    free_memory: int = 0
+    total_memory: int = 0
+    cuda_memory: int = 0
+    torch_memory: int = 0
+    non_torch_memory: int = 0
+    timestamp: float = 0.0
+    auto_measure: bool = True
+
+    def __post_init__(self):
+        if self.auto_measure:
+            self.measure()
+
+    def measure(self):
+        import time
+        torch_device_fn = current_platform.torch_device_fn
+
+        # Get peak memory stats using platform-agnostic API
+        try:
+            self.torch_peak = torch_device_fn.memory_stats().get(
+                "allocated_bytes.all.peak", 0)
+        except (AttributeError, RuntimeError):
+            self.torch_peak = 0
+
+        # Get free and total memory using platform-agnostic API
+        self.free_memory, self.total_memory = torch_device_fn.mem_get_info()
+        self.cuda_memory = self.total_memory - self.free_memory
+
+        # Get torch reserved memory
+        try:
+            self.torch_memory = torch_device_fn.memory_reserved()
+        except (AttributeError, RuntimeError):
+            self.torch_memory = 0
+
+        self.non_torch_memory = self.cuda_memory - self.torch_memory
+        self.timestamp = time.time()
+
+    def __sub__(self, other: 'MemorySnapshot') -> 'MemorySnapshot':
+        result = MemorySnapshot(auto_measure=False)
+        result.torch_peak = self.torch_peak - other.torch_peak
+        result.free_memory = self.free_memory - other.free_memory
+        result.total_memory = self.total_memory
+        result.cuda_memory = self.cuda_memory - other.cuda_memory
+        result.torch_memory = self.torch_memory - other.torch_memory
+        result.non_torch_memory = self.non_torch_memory - other.non_torch_memory
+        result.timestamp = self.timestamp - other.timestamp
+        return result
+
+
+@dataclass
+class MemoryProfilingResult:
+    """Platform-agnostic memory profiling result."""
+    before_create: MemorySnapshot = None
+    before_profile: MemorySnapshot = None
+    after_profile: MemorySnapshot = None
+    weights_memory: int = 0
+    torch_peak_increase: int = 0
+    non_torch_increase: int = 0
+    non_kv_cache_memory: int = 0
+    profile_time: float = 0.0
+
+    def __post_init__(self):
+        if self.before_profile is None:
+            self.before_profile = MemorySnapshot(auto_measure=False)
+        if self.after_profile is None:
+            self.after_profile = MemorySnapshot(auto_measure=False)
+
+
+@contextmanager
+def memory_profiling_fl(
+        baseline_snapshot: MemorySnapshot,
+        weights_memory: int) -> Generator[MemoryProfilingResult, None, None]:
+    """Platform-agnostic memory profiling context manager for FL worker."""
+    gc.collect()
+    torch_device_fn = current_platform.torch_device_fn
+    torch_device_fn.empty_cache()
+
+    # Reset peak memory stats - platform agnostic
+    try:
+        torch_device_fn.reset_peak_memory_stats()
+    except (AttributeError, RuntimeError):
+        pass  # Some platforms may not support this
+
+    result = MemoryProfilingResult()
+    result.before_create = baseline_snapshot
+    result.weights_memory = weights_memory
+    result.before_profile.measure()
+
+    yield result
+
+    gc.collect()
+    torch_device_fn.empty_cache()
+
+    result.after_profile.measure()
+
+    diff_profile = result.after_profile - result.before_profile
+    diff_from_create = result.after_profile - result.before_create
+    result.torch_peak_increase = diff_profile.torch_peak
+    result.non_torch_increase = diff_from_create.non_torch_memory
+    result.profile_time = diff_profile.timestamp
+
+    non_torch_memory = result.non_torch_increase
+    peak_activation_memory = result.torch_peak_increase
+    result.non_kv_cache_memory = non_torch_memory + peak_activation_memory + result.weights_memory
 
 
 class WorkerFL(WorkerBase):
@@ -102,7 +217,25 @@ class WorkerFL(WorkerBase):
         else:
             self.profiler = None
         register_oot_ops()
-        flag_gems.enable(record=False, unused=["index", "index_put_"])
+
+        # Backend-specific flag_gems initialization
+        if is_npu():
+            # NPU: Selective enable - exclude copy-related ops which are incompatible
+            from flag_gems.runtime.register import Register
+            from flag_gems import aten_lib
+            from flag_gems.config import aten_patch_list
+
+            safe_ops = []
+            unsafe_ops = {'copy_', '_to_copy'}
+            for op_name, op_func in aten_patch_list:
+                if op_name not in unsafe_ops:
+                    safe_ops.append((op_name, op_func))
+
+            if safe_ops:
+                Register(tuple(safe_ops), lib=aten_lib)
+            # flag_gems.enable(record=False, unused=['copy_', '_to_copy'])
+        else:
+            flag_gems.enable(record=False, unused=["index", "index_put_"])
 
     # def sleep(self, level: int = 1) -> None:
     #     from vllm.device_allocator.cumem import CuMemAllocator
@@ -260,11 +393,14 @@ class WorkerFL(WorkerBase):
             return kv_cache_memory_bytes
 
         current_platform.empty_cache()
-        current_platform.torch_device_fn.reset_peak_memory_stats()
+        try:
+            current_platform.torch_device_fn.reset_peak_memory_stats()
+        except (AttributeError, RuntimeError):
+            pass  # Some platforms may not support this
 
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
-        with memory_profiling(
+        with memory_profiling_fl(
                 self.init_snapshot,
                 weights_memory=int(self.model_runner.model_memory_usage),
         ) as profile_result:

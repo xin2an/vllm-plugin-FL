@@ -5,7 +5,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from dataclasses import dataclass
-from typing import Optional
+from enum import Enum
+from typing import Any, Optional, List, Tuple
 
 import numpy as np
 import torch
@@ -18,6 +19,7 @@ from vllm.attention.layer import Attention
 from vllm.attention.ops.merge_attn_states import merge_attn_states
 
 from vllm.config import VllmConfig, get_layers_from_vllm_config
+from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.logger import init_logger
 from vllm.utils import cdiv
 from vllm.v1.attention.backends.utils import (AttentionCGSupport,
@@ -25,9 +27,147 @@ from vllm.v1.attention.backends.utils import (AttentionCGSupport,
                                               CommonAttentionMetadata,
                                               get_kv_cache_layout)
 from vllm.v1.kv_cache_interface import AttentionSpec
-from flag_gems import flash_attn_varlen_func, reshape_and_cache_flash
+
+from vllm_fl.utils import is_npu, is_cuda
 
 logger = init_logger(__name__)
+
+# ============================================================================
+# Ascend NPU specific utilities (matching vllm-ascend)
+# ============================================================================
+
+_IS_310P: Optional[bool] = None
+
+
+def is_310p() -> bool:
+    """Check if running on Ascend 310P device."""
+    global _IS_310P
+    if _IS_310P is None:
+        try:
+            import importlib
+            if importlib.util.find_spec("vllm_ascend") is not None:
+                from vllm_ascend import _build_info
+                _IS_310P = _build_info.__soc_version__.lower().startswith(
+                    "ascend310p")
+            else:
+                _IS_310P = False
+        except (ImportError, AttributeError):
+            _IS_310P = False
+    return _IS_310P
+
+
+def weak_ref_tensor(tensor: Any) -> Any:
+    """Create weak reference to a single tensor (NPU only)."""
+    if isinstance(tensor, torch.Tensor):
+        try:
+            return torch.ops._C_ascend.weak_ref_tensor(tensor)
+        except (AttributeError, RuntimeError):
+            return tensor
+    return tensor
+
+
+def weak_ref_tensors(tensors: Any) -> Any:
+    """Create weak references to tensors (single, list, or tuple)."""
+    if isinstance(tensors, torch.Tensor):
+        return weak_ref_tensor(tensors)
+    if isinstance(tensors, list):
+        return [weak_ref_tensor(t) for t in tensors]
+    if isinstance(tensors, tuple):
+        return tuple(weak_ref_tensor(t) for t in tensors)
+    return tensors
+
+
+@dataclass
+class GraphParams:
+    """Parameters for graph capturing mode (NPU only)."""
+    events: dict[int, list]
+    workspaces: dict[int, Optional[torch.Tensor]]
+    handles: dict[int, list]
+    attn_params: dict[int, list[tuple]]
+
+
+_graph_params: Optional[GraphParams] = None
+
+
+def set_graph_params(aclgraph_capture_sizes: set[int]) -> None:
+    """Initialize graph parameters for specified capture sizes."""
+    global _graph_params
+    if _graph_params is not None:
+        raise ValueError("Graph parameters have already been set!")
+    _graph_params = GraphParams(
+        events={size: [] for size in aclgraph_capture_sizes},
+        workspaces={size: None for size in aclgraph_capture_sizes},
+        handles={size: [] for size in aclgraph_capture_sizes},
+        attn_params={size: [] for size in aclgraph_capture_sizes},
+    )
+
+
+def update_graph_params_workspaces(num_tokens: int, workspace: Any) -> None:
+    """Update workspace for a specific token count."""
+    global _graph_params
+    if _graph_params is not None:
+        _graph_params.workspaces[num_tokens] = workspace
+
+
+def get_graph_params() -> Optional[GraphParams]:
+    """Get current graph parameters."""
+    return _graph_params
+
+
+# Global causal mask cache for prefill attention (NPU only)
+_CAUSAL_MASK_CACHE_CPU: Optional[torch.Tensor] = None
+_CAUSAL_MASK_CACHE_SIZE: int = 0
+_CAUSAL_MASK_CACHE_DTYPE: Optional[torch.dtype] = None
+_CAUSAL_MASK_CACHE_DEVICE: Optional[torch.Tensor] = None
+_CAUSAL_MASK_CACHE_DEVICE_TYPE: Optional[torch.device] = None
+
+
+def _get_causal_mask(max_seq_len: int, dtype: torch.dtype,
+                     device: torch.device) -> torch.Tensor:
+    """Get or create a cached causal attention mask for prefill (NPU only)."""
+    global _CAUSAL_MASK_CACHE_CPU, _CAUSAL_MASK_CACHE_SIZE, _CAUSAL_MASK_CACHE_DTYPE
+    global _CAUSAL_MASK_CACHE_DEVICE, _CAUSAL_MASK_CACHE_DEVICE_TYPE
+
+    need_recreate_cpu = (
+        _CAUSAL_MASK_CACHE_CPU is None or
+        _CAUSAL_MASK_CACHE_SIZE < max_seq_len or
+        _CAUSAL_MASK_CACHE_DTYPE != dtype
+    )
+
+    if need_recreate_cpu:
+        cache_size = max(max_seq_len, _CAUSAL_MASK_CACHE_SIZE * 2, 2048)
+        mask_flag = torch.ones((cache_size, cache_size),
+                               dtype=torch.bool).tril_()
+        mask_flag = ~mask_flag
+        mask_value = float('-inf') if dtype == torch.float16 else 1
+        _CAUSAL_MASK_CACHE_CPU = torch.zeros(
+            size=(cache_size, cache_size), dtype=dtype
+        ).masked_fill_(mask_flag, mask_value)
+        _CAUSAL_MASK_CACHE_SIZE = cache_size
+        _CAUSAL_MASK_CACHE_DTYPE = dtype
+        _CAUSAL_MASK_CACHE_DEVICE = None
+        _CAUSAL_MASK_CACHE_DEVICE_TYPE = None
+
+    need_transfer = (
+        _CAUSAL_MASK_CACHE_DEVICE is None or
+        _CAUSAL_MASK_CACHE_DEVICE_TYPE != device
+    )
+
+    if need_transfer:
+        _CAUSAL_MASK_CACHE_DEVICE = _CAUSAL_MASK_CACHE_CPU.to(
+            device, non_blocking=False)
+        _CAUSAL_MASK_CACHE_DEVICE_TYPE = device
+
+    return _CAUSAL_MASK_CACHE_DEVICE[:max_seq_len, :max_seq_len].contiguous()
+
+
+class AscendAttentionState(Enum):
+    """Attention state for routing to different attention kernels (NPU only)."""
+    PrefillNoCache = 0
+    PrefillCacheHit = 1
+    DecodeOnly = 2
+    ChunkedPrefill = 3
+    SpecDecoding = 4
 
 
 class AttentionFLBackend(AttentionBackend):
@@ -70,6 +210,16 @@ class AttentionFLBackend(AttentionBackend):
         return AttentionFLMetadataBuilder
 
     @staticmethod
+    def get_supported_block_size() -> list[int]:
+        """Get supported block sizes based on backend."""
+        if is_npu():
+            # torch_npu._npu_reshape_and_cache requires block_size=128
+            return [128]
+        else:
+            # NVIDIA supports block_size multiple of 16
+            return [16, 32, 64, 128, 256]
+
+    @staticmethod
     def get_kv_cache_shape(
         num_blocks: int,
         block_size: int,
@@ -77,8 +227,8 @@ class AttentionFLBackend(AttentionBackend):
         head_size: int,
         cache_dtype_str: str = "auto",
     ) -> tuple[int, ...]:
-        if block_size % 16 != 0:
-            raise ValueError("Block size must be a multiple of 16.")
+        if is_cuda() and block_size % 16 != 0:
+            raise ValueError("Block size must be a multiple of 16 for CUDA.")
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
     @staticmethod
@@ -114,12 +264,30 @@ class AttentionFLMetadata:
     block_table: torch.Tensor
     slot_mapping: torch.Tensor
 
+    # CPU version of seq_lens for NPU (for _npu_flash_attention)
+    seq_lens_cpu: torch.Tensor | None = None
+
+    # Attention state for routing to different kernels (NPU only)
+    attn_state: AscendAttentionState = AscendAttentionState.ChunkedPrefill
+
+    # Attention mask for chunked prefill (NPU only)
+    attn_mask: torch.Tensor | None = None
+
+    # Query lengths per request (for chunked prefill, NPU only)
+    query_lens: torch.Tensor | None = None
+
+    # Sequence lengths as list (for npu_fused_infer_attention_score)
+    seq_lens_list: List[int] | None = None
+
+    # Actual sequence lengths for query (for npu_fused_infer_attention_score)
+    actual_seq_lengths_q: List[int] | None = None
+
     # For cascade attention.
-    use_cascade: bool
-    common_prefix_len: int
-    cu_prefix_query_lens: torch.Tensor | None
-    prefix_kv_lens: torch.Tensor | None
-    suffix_kv_lens: torch.Tensor | None
+    use_cascade: bool = False
+    common_prefix_len: int = 0
+    cu_prefix_query_lens: torch.Tensor | None = None
+    prefix_kv_lens: torch.Tensor | None = None
+    suffix_kv_lens: torch.Tensor | None = None
 
     # Optional aot scheduling
     scheduler_metadata: torch.Tensor | None = None
@@ -214,6 +382,30 @@ class AttentionFLMetadataBuilder(AttentionMetadataBuilder[AttentionFLMetadata]):
         # populated on first build() call.
         self.aot_sliding_window: tuple[int, int] | None = None
 
+        # NPU-specific: Pre-allocated attention mask for chunked prefill
+        if is_npu():
+            assigned_mask_dim = 2048
+            self.chunked_prefill_attn_mask = torch.triu(
+                torch.ones(assigned_mask_dim, assigned_mask_dim),
+                diagonal=1).to(torch.int8).to(device)
+        else:
+            self.chunked_prefill_attn_mask = None
+
+    def _build_attn_state(
+        self,
+        num_reqs: int,
+        seq_lens_np: np.ndarray,
+        query_lens_np: np.ndarray,
+    ) -> AscendAttentionState:
+        """Determine the attention state based on batch characteristics (NPU only)."""
+        if np.array_equal(seq_lens_np[:num_reqs], query_lens_np[:num_reqs]):
+            return AscendAttentionState.PrefillNoCache
+
+        if np.all(query_lens_np[:num_reqs] == 1):
+            return AscendAttentionState.DecodeOnly
+
+        return AscendAttentionState.ChunkedPrefill
+
     def build(
         self,
         common_prefix_len: int,
@@ -235,7 +427,10 @@ class AttentionFLMetadataBuilder(AttentionMetadataBuilder[AttentionFLMetadata]):
         slot_mapping = common_attn_metadata.slot_mapping
         causal = common_attn_metadata.causal
 
-        # the overhead of the aot schedule is not worth it for spec-decode
+        # For NPU, truncate slot_mapping to actual tokens
+        if is_npu():
+            slot_mapping = slot_mapping[:num_actual_tokens]
+
         aot_schedule = self.aot_schedule and not fast_build
 
         if self.aot_sliding_window is None:
@@ -313,14 +508,42 @@ class AttentionFLMetadataBuilder(AttentionMetadataBuilder[AttentionFLMetadata]):
             self.scheduler_metadata[n:] = 0
             scheduler_metadata = self.scheduler_metadata[:n]
 
+        # NPU-specific: compute attention state and mask
+        attn_state = AscendAttentionState.ChunkedPrefill
+        attn_mask = None
+        query_lens_tensor = None
+        seq_lens_list = None
+        actual_seq_lengths_q = None
+
+        if is_npu():
+            query_start_loc_cpu = common_attn_metadata.query_start_loc_cpu
+            query_lens_np = (query_start_loc_cpu[1:num_reqs+1] -
+                             query_start_loc_cpu[:num_reqs]).numpy()
+            seq_lens_np = seq_lens_cpu[:num_reqs].numpy()
+
+            attn_state = self._build_attn_state(num_reqs, seq_lens_np, query_lens_np)
+
+            if attn_state == AscendAttentionState.ChunkedPrefill:
+                attn_mask = self.chunked_prefill_attn_mask
+                query_lens_tensor = torch.from_numpy(query_lens_np).to(
+                    dtype=torch.int32, device=self.device)
+                seq_lens_list = seq_lens_np.tolist()
+                actual_seq_lengths_q = query_start_loc_cpu[1:num_reqs+1].tolist()
+
         attn_metadata = AttentionFLMetadata(
             num_actual_tokens=num_actual_tokens,
             max_query_len=max_query_len,
             query_start_loc=query_start_loc,
             max_seq_len=max_seq_len,
             seq_lens=seq_lens,
+            seq_lens_cpu=seq_lens_cpu,
             block_table=block_table_tensor,
             slot_mapping=slot_mapping,
+            attn_state=attn_state,
+            attn_mask=attn_mask,
+            query_lens=query_lens_tensor,
+            seq_lens_list=seq_lens_list,
+            actual_seq_lengths_q=actual_seq_lengths_q,
             use_cascade=use_cascade,
             common_prefix_len=common_prefix_len,
             scheduler_metadata=scheduler_metadata,
@@ -361,6 +584,7 @@ class AttentionFLImpl(AttentionImpl):
         if alibi_slopes is not None:
             alibi_slopes = torch.tensor(alibi_slopes, dtype=torch.float32)
         self.alibi_slopes = alibi_slopes
+        self.sliding_window_size = sliding_window
         if sliding_window is None:
             self.sliding_window = (-1, -1)
         elif attn_type == AttentionType.ENCODER_ONLY:
@@ -390,8 +614,259 @@ class AttentionFLImpl(AttentionImpl):
         self.sinks = None
 
     ### TODO(lms): support int8/int4 attention compute 
+        self.key_cache: Optional[torch.Tensor] = None
+        self.value_cache: Optional[torch.Tensor] = None
+
     def supports_quant_query_input(self) -> bool:
         return False
+
+    # ========================================================================
+    # NPU-specific forward methods
+    # ========================================================================
+
+    def _forward_prefill_npu(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: "AttentionFLMetadata",
+        output: torch.Tensor,
+        num_actual_tokens: int,
+    ) -> torch.Tensor:
+        """Forward pass for prefill stage using _npu_flash_attention (NPU only)."""
+        import torch_npu
+
+        max_seq_len = attn_metadata.max_seq_len
+        mask = _get_causal_mask(max_seq_len, query.dtype, query.device)
+        seq_len = attn_metadata.seq_lens_cpu
+
+        torch_npu._npu_flash_attention(
+            query=query,
+            key=key,
+            value=value.contiguous(),
+            mask=mask,
+            seq_len=seq_len,
+            scale_value=self.scale,
+            num_heads=self.num_heads,
+            num_kv_heads=self.num_kv_heads,
+            out=output,
+        )
+        return output[:num_actual_tokens, :, :]
+
+    def _forward_decode_npu(
+        self,
+        query: torch.Tensor,
+        attn_metadata: "AttentionFLMetadata",
+        output: torch.Tensor,
+        num_actual_tokens: int,
+    ) -> torch.Tensor:
+        """Forward pass for decode stage using paged attention (NPU only)."""
+        import torch_npu
+
+        seq_lens = attn_metadata.seq_lens_cpu
+        if is_310p():
+            seq_lens = seq_lens.to(device=query.device)
+
+        # Sliding window special handling
+        if (self.sliding_window_size is not None
+                and seq_lens.shape[0] == query.size(0)):
+            batch_size = seq_lens.shape[0]
+            block_size = 128
+            query_reshaped = query.view(
+                batch_size, 1, self.num_heads * self.head_size)
+            key = self.key_cache
+            value = self.value_cache
+
+            if self.key_cache is not None and self.value_cache is not None:
+                block_size = self.key_cache.shape[1]
+                key = self.key_cache.flatten(2, 3).contiguous()
+                value = self.value_cache.flatten(2, 3).contiguous()
+
+            attn_output, _ = torch_npu.npu_fused_infer_attention_score(
+                query_reshaped,
+                key,
+                value,
+                num_heads=self.num_heads,
+                num_key_value_heads=self.num_kv_heads,
+                input_layout="BSH",
+                block_size=block_size,
+                pre_tokens=self.sliding_window_size,
+                scale=self.scale,
+                block_table=attn_metadata.block_table,
+                actual_seq_lengths=[1] * len(seq_lens),
+                actual_seq_lengths_kv=seq_lens)
+
+            output = attn_output.view(batch_size, self.num_heads, self.head_size)
+            return output
+
+        # Graph capturing mode and normal mode
+        graph_params = get_graph_params()
+        forward_context: ForwardContext = get_forward_context()
+        num_tokens = query.shape[0]
+        is_capturing = getattr(forward_context, 'capturing', False)
+
+        if is_capturing:
+            workspace = graph_params.workspaces.get(
+                num_tokens) if graph_params else None
+            if workspace is None:
+                workspace = torch_npu._npu_paged_attention_get_workspace(
+                    query=query,
+                    key_cache=self.key_cache,
+                    value_cache=self.value_cache,
+                    num_kv_heads=self.num_kv_heads,
+                    num_heads=self.num_heads,
+                    scale_value=self.scale,
+                    block_table=attn_metadata.block_table,
+                    context_lens=seq_lens,
+                    out=output)
+                if graph_params:
+                    update_graph_params_workspaces(num_tokens,
+                                                   weak_ref_tensors(workspace))
+
+            stream = torch_npu.npu.current_stream()
+            event = torch.npu.ExternalEvent()
+            event.wait(stream)
+            event.reset(stream)
+            if graph_params:
+                graph_params.events[num_tokens].append(event)
+                graph_params.attn_params[num_tokens].append((
+                    weak_ref_tensors(query),
+                    weak_ref_tensors(self.key_cache),
+                    weak_ref_tensors(self.value_cache),
+                    self.num_kv_heads,
+                    self.num_heads,
+                    self.scale,
+                    attn_metadata.block_table,
+                    seq_lens,
+                    weak_ref_tensors(output),
+                ))
+
+            torch.npu.graph_task_group_begin(stream)
+            torch_npu._npu_paged_attention(
+                query=query,
+                key_cache=self.key_cache,
+                value_cache=self.value_cache,
+                num_kv_heads=self.num_kv_heads,
+                num_heads=self.num_heads,
+                scale_value=self.scale,
+                block_table=attn_metadata.block_table,
+                context_lens=seq_lens,
+                out=output,
+                workspace=workspace)
+            handle = torch.npu.graph_task_group_end(stream)
+            if graph_params:
+                graph_params.handles[num_tokens].append(handle)
+        else:
+            torch_npu._npu_paged_attention(
+                query=query,
+                key_cache=self.key_cache,
+                value_cache=self.value_cache,
+                num_kv_heads=self.num_kv_heads,
+                num_heads=self.num_heads,
+                scale_value=self.scale,
+                block_table=attn_metadata.block_table,
+                context_lens=seq_lens,
+                out=output,
+            )
+        return output
+
+    def _forward_chunked_prefill_npu(
+        self,
+        query: torch.Tensor,
+        attn_metadata: "AttentionFLMetadata",
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward pass for chunked prefill using npu_fused_infer_attention_score (NPU only)."""
+        import torch_npu
+
+        if self.head_size == 192:
+            raise NotImplementedError(
+                "Chunked prefill with head_size=192 is not yet supported in vllm-fl."
+            )
+
+        assert attn_metadata is not None
+        assert attn_metadata.attn_mask is not None
+
+        if is_310p():
+            attn_metadata.attn_mask = torch_npu.npu_format_cast(
+                attn_metadata.attn_mask.contiguous(), 29)
+            attn_metadata.seq_lens = attn_metadata.seq_lens.to(device=query.device)
+
+        num_block, block_size, _, _ = self.key_cache.shape
+        key = self.key_cache.view(num_block, block_size, -1)
+        value = self.value_cache.view(num_block, block_size, -1)
+
+        output, _ = torch_npu.npu_fused_infer_attention_score(
+            query=query,
+            key=key,
+            value=value,
+            atten_mask=attn_metadata.attn_mask,
+            block_table=attn_metadata.block_table,
+            input_layout="TND",
+            block_size=block_size,
+            actual_seq_lengths=attn_metadata.actual_seq_lengths_q,
+            actual_seq_lengths_kv=attn_metadata.seq_lens_list,
+            num_key_value_heads=self.num_kv_heads,
+            num_heads=self.num_heads,
+            scale=self.scale,
+            sparse_mode=3,
+        )
+
+        return output
+
+    # ========================================================================
+    # CUDA-specific forward methods
+    # ========================================================================
+
+    def _forward_cuda(
+        self,
+        layer: torch.nn.Module,
+        query: torch.Tensor,
+        key_cache: torch.Tensor,
+        value_cache: torch.Tensor,
+        attn_metadata: AttentionFLMetadata,
+        output: torch.Tensor,
+        num_actual_tokens: int,
+    ) -> torch.Tensor:
+        """Forward pass using flag_gems flash attention (CUDA)."""
+        from flag_gems import flash_attn_varlen_func
+
+        cu_seqlens_q = attn_metadata.query_start_loc
+        seqused_k = attn_metadata.seq_lens
+        max_seqlen_q = attn_metadata.max_query_len
+        max_seqlen_k = attn_metadata.max_seq_len
+        block_table = attn_metadata.block_table
+        scheduler_metadata = attn_metadata.scheduler_metadata
+
+        descale_shape = (cu_seqlens_q.shape[0] - 1, self.num_kv_heads)
+
+        flash_attn_varlen_func(
+            q=query[:num_actual_tokens],
+            k=key_cache,
+            v=value_cache,
+            out=output[:num_actual_tokens],
+            cu_seqlens_q=cu_seqlens_q,
+            max_seqlen_q=max_seqlen_q,
+            seqused_k=seqused_k,
+            max_seqlen_k=max_seqlen_k,
+            softmax_scale=self.scale,
+            causal=attn_metadata.causal,
+            alibi_slopes=self.alibi_slopes,
+            window_size=self.sliding_window,
+            block_table=block_table,
+            softcap=self.logits_soft_cap,
+            scheduler_metadata=scheduler_metadata,
+            fa_version=self.vllm_flash_attn_version,
+            q_descale=layer._q_scale.expand(descale_shape),
+            k_descale=layer._k_scale.expand(descale_shape),
+            v_descale=layer._v_scale.expand(descale_shape),
+            num_splits=attn_metadata.max_num_splits,
+        )
+        return output
+
+    # ========================================================================
+    # Main forward method
+    # ========================================================================
 
     def forward(
         self,
@@ -457,8 +932,20 @@ class AttentionFLImpl(AttentionImpl):
                 layer,
             )
 
-        # For decoder and cross-attention, use KV cache as before
-        key_cache, value_cache = kv_cache.unbind(0)
+        # Get KV cache
+        if is_npu():
+            # NPU: Use indexing like vllm-ascend
+            if len(kv_cache) > 1:
+                if self.key_cache is None:
+                    self.key_cache, self.value_cache = kv_cache[0], kv_cache[1]
+                key_cache, value_cache = self.key_cache, self.value_cache
+            else:
+                key_cache, value_cache = kv_cache.unbind(0)
+                self.key_cache = key_cache
+                self.value_cache = value_cache
+        else:
+            # CUDA: Use unbind
+            key_cache, value_cache = kv_cache.unbind(0)
 
         # key and value may be None in the case of cross attention. They are
         # calculated once based on the output from the encoder and then cached
@@ -468,59 +955,54 @@ class AttentionFLImpl(AttentionImpl):
             and key is not None
             and value is not None
         ):
-            # Reshape the input keys and values and store them in the cache.
-            # Skip this if sharing KV cache with an earlier attention layer.
-            # NOTE(woosuk): Here, key and value are padded while slot_mapping is
-            # not padded. However, we don't need to do key[:num_actual_tokens]
-            # and value[:num_actual_tokens] because the reshape_and_cache_flash
-            # op uses the slot_mapping's shape to determine the number of
-            # actual tokens.
-            reshape_and_cache_flash(
-                key,
-                value,
-                key_cache,
-                value_cache,
-                attn_metadata.slot_mapping,
-                self.kv_cache_dtype,
-                layer._k_scale,
-                layer._v_scale,
-            )
+            if is_npu():
+                # NPU: Use torch_npu native reshape_and_cache
+                import torch_npu
+                slots = attn_metadata.slot_mapping
+                value = value.contiguous()
+                if slots.dtype != torch.int32:
+                    slots = slots.to(torch.int32)
+                torch_npu._npu_reshape_and_cache(
+                    key=key[:num_actual_tokens],
+                    value=value[:num_actual_tokens],
+                    key_cache=self.key_cache,
+                    value_cache=self.value_cache,
+                    slot_indices=slots,
+                )
+            else:
+                # CUDA: Use flag_gems
+                from flag_gems import reshape_and_cache_flash
+                reshape_and_cache_flash(
+                    key,
+                    value,
+                    key_cache,
+                    value_cache,
+                    attn_metadata.slot_mapping,
+                    self.kv_cache_dtype,
+                    layer._k_scale,
+                    layer._v_scale,
+                )
 
+        # Main attention computation
         if not attn_metadata.use_cascade:
-            cu_seqlens_q = attn_metadata.query_start_loc
-            seqused_k = attn_metadata.seq_lens
-            max_seqlen_q = attn_metadata.max_query_len
-            max_seqlen_k = attn_metadata.max_seq_len
-            block_table = attn_metadata.block_table
-            scheduler_metadata = attn_metadata.scheduler_metadata
+            if is_npu():
+                # NPU: Route based on attention state
+                if attn_metadata.attn_state == AscendAttentionState.PrefillNoCache:
+                    return self._forward_prefill_npu(
+                        query, key, value, attn_metadata, output, num_actual_tokens)
+                elif attn_metadata.attn_state == AscendAttentionState.DecodeOnly:
+                    return self._forward_decode_npu(
+                        query, attn_metadata, output, num_actual_tokens)
+                else:  # ChunkedPrefill
+                    return self._forward_chunked_prefill_npu(
+                        query, attn_metadata, output)
+            else:
+                # CUDA: Use flag_gems flash attention
+                return self._forward_cuda(
+                    layer, query, key_cache, value_cache,
+                    attn_metadata, output, num_actual_tokens)
 
-            descale_shape = (cu_seqlens_q.shape[0] - 1, self.num_kv_heads)
-
-            flash_attn_varlen_func(
-                q=query[:num_actual_tokens],
-                k=key_cache,
-                v=value_cache,
-                out=output[:num_actual_tokens],
-                cu_seqlens_q=cu_seqlens_q,
-                max_seqlen_q=max_seqlen_q,
-                seqused_k=seqused_k,
-                max_seqlen_k=max_seqlen_k,
-                softmax_scale=self.scale,
-                causal=attn_metadata.causal,
-                alibi_slopes=self.alibi_slopes,
-                window_size=self.sliding_window,
-                block_table=block_table,
-                softcap=self.logits_soft_cap,
-                scheduler_metadata=scheduler_metadata,
-                fa_version=self.vllm_flash_attn_version,
-                q_descale=layer._q_scale.expand(descale_shape),
-                k_descale=layer._k_scale.expand(descale_shape),
-                v_descale=layer._v_scale.expand(descale_shape),
-                num_splits=attn_metadata.max_num_splits,
-            )
-            return output
-
-        # Cascade attention (rare case).
+        # Cascade attention (rare case)
         cascade_attention(
             output[:num_actual_tokens],
             query[:num_actual_tokens],
@@ -582,7 +1064,7 @@ class AttentionFLImpl(AttentionImpl):
             cu_seqlens_q.shape[0] - 1,  # type: ignore[union-attr]
             self.num_kv_heads)
 
-        # Call flash attention directly on Q, K, V tensors
+        from flag_gems import flash_attn_varlen_func
         flash_attn_varlen_func(
             q=query,
             k=key,
@@ -593,7 +1075,7 @@ class AttentionFLImpl(AttentionImpl):
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
             softmax_scale=self.scale,
-            causal=False,  # Encoder attention is bidirectional
+            causal=False,
             alibi_slopes=self.alibi_slopes,
             window_size=self.sliding_window,
             softcap=self.logits_soft_cap,
@@ -604,6 +1086,7 @@ class AttentionFLImpl(AttentionImpl):
         )
 
         return output
+
 
 def use_cascade_attention(
     common_prefix_len: int,
@@ -703,6 +1186,9 @@ def cascade_attention(
     k_descale: torch.Tensor | None = None,
     v_descale: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """Cascade attention implementation."""
+    from flag_gems import flash_attn_varlen_func
+
     assert alibi_slopes is None, "Cascade attention does not support ALiBi."
     # TODO: Support sliding window.
     assert sliding_window == (-1, -1), (

@@ -22,25 +22,57 @@ if TYPE_CHECKING:
 else:
     _Backend = None
 
-from vllm_fl.utils import DeviceInfo
-
 logger = init_logger(__name__)
+
+# Lazy initialization for DeviceInfo to avoid device init during module import
+_device_info = None
+
+
+def _get_device_info():
+    """Get device info with lazy initialization."""
+    global _device_info
+    if _device_info is None:
+        from vllm_fl.utils import DeviceInfo
+        _device_info = DeviceInfo()
+    return _device_info
+
 
 class PlatformFL(Platform):
     _enum = PlatformEnum.OOT
-    device_info = DeviceInfo()
-    device_name = device_info.device_type 
-    device_type = device_info.device_type 
-    dispatch_key = device_info.dispatch_key
-    torch_device_fn = device_info.torch_device_fn
     ray_device_key: str = "flagos"
     dist_backend: str = "flagcx"
+
+    @classmethod
+    def _get_device_info(cls):
+        return _get_device_info()
+
+    @property
+    def device_info(self):
+        return _get_device_info()
+
+    @property
+    def device_name(self):
+        return _get_device_info().device_type
+
+    @property
+    def device_type(self):
+        return _get_device_info().device_type
+
+    @property
+    def dispatch_key(self):
+        return _get_device_info().dispatch_key
+
+    @property
+    def torch_device_fn(self):
+        return _get_device_info().torch_device_fn
+
+
     ### TODO(lms): dispatch device_control_env_var
     # device_control_env_var: str = "CUDA_VISIBLE_DEVICES"
 
     def is_cuda_alike(self) -> bool:
         """Stateless version of [torch.cuda.is_available][]."""
-        return self.device_type == "cuda"
+        return self._get_device_info().device_type == "cuda"
 
     @property
     def supported_dtypes(self) -> list[torch.dtype]:
@@ -57,20 +89,21 @@ class PlatformFL(Platform):
     def get_current_memory_usage(cls,
                                  device: Optional[torch.types.Device] = None
                                  ) -> float:
-        cls.torch_device_fn.empty_cache()
-        cls.torch_device_fn.reset_peak_memory_stats(device)
-        return cls.torch_device_fn.max_memory_allocated(device)
+        torch_device_fn = cls._get_device_info().torch_device_fn
+        torch_device_fn.empty_cache()
+        torch_device_fn.reset_peak_memory_stats(device)
+        return torch_device_fn.max_memory_allocated(device)
 
     @classmethod
     def set_device(cls, device: torch.device) -> None:
         """
         Set the device for the current platform.
         """
-        cls.torch_device_fn.set_device(device)
-    
+        cls._get_device_info().torch_device_fn.set_device(device)
+
     @classmethod
     def empty_cache(cls) -> None:
-        cls.torch_device_fn.empty_cache()
+        cls._get_device_info().torch_device_fn.empty_cache()
 
     @classmethod
     def get_device_capability(cls, device_id: int = 0):
@@ -78,22 +111,24 @@ class PlatformFL(Platform):
 
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
-        return cls.device_name
+        return cls._get_device_info().device_type
 
     @classmethod
     def verify_quantization(cls, quant: str) -> None:
         """
         Verify whether the quantization is supported by the current platform.
         """
+        device_name = cls._get_device_info().device_type
         if cls.supported_quantization and quant not in cls.supported_quantization:
             raise ValueError(
-                f"{quant} quantization is currently not supported in {cls.device_name}."
+                f"{quant} quantization is currently not supported in {device_name}."
             )
-        
+
     ### TODO(lms): change pin_memory depend device
     @classmethod
     def is_pin_memory_available(cls):
-        if cls.device_type in ["cuda", "xpu", "npu"]:
+        device_type = cls._get_device_info().device_type
+        if device_type in ["cuda", "xpu", "npu"]:
             return True
         return False
 
@@ -101,12 +136,21 @@ class PlatformFL(Platform):
     def check_and_update_config(cls, vllm_config: "VllmConfig") -> None:
         parallel_config = vllm_config.parallel_config
         model_config = vllm_config.model_config
+        device_info = cls._get_device_info()
 
         parallel_config.worker_cls = "vllm_fl.worker.worker.WorkerFL"
 
         cache_config = vllm_config.cache_config
-        if cache_config and cache_config.block_size is None:
-            cache_config.block_size = 16
+
+        # Backend-specific block_size configuration
+        if device_info.is_npu():
+            # Ascend NPU: torch_npu._npu_reshape_and_cache requires block_size=128
+            if cache_config:
+                cache_config.block_size = 128
+        else:
+            # NVIDIA/CUDA: default block_size=16
+            if cache_config and cache_config.block_size is None:
+                cache_config.block_size = 16
 
         # TODO(lucas): handle this more gracefully
         # Note: model_config may be None during testing
@@ -119,10 +163,56 @@ class PlatformFL(Platform):
             and model_config.use_mla
             and cache_config.block_size is not None
         ):
-            if cache_config.block_size % 64 != 0:
-                cache_config.block_size = 64
-                logger.info("Forcing kv cache block size to 64 for FlagOSMLA backend.")
+            use_sparse = hasattr(vllm_config.model_config.hf_config, "index_topk")
+            # If `VLLM_ATTENTION_BACKEND` is not set and we are using MLA,
+            # then we default to FlashMLA backend for non-blackwell GPUs,
+            # else we default to CutlassMLA. For each case, we force the
+            # required block_size.
+            use_flashmla = False
+            use_cutlass_mla = False
+            use_flashinfer_mla = False
 
+            if envs.VLLM_ATTENTION_BACKEND is None:
+                # Default case
+                use_flashmla = True
+            else:
+                # Forced case
+                use_flashmla = envs.VLLM_ATTENTION_BACKEND == "FLASHMLA"
+                use_cutlass_mla = envs.VLLM_ATTENTION_BACKEND == "CUTLASS_MLA"
+                use_flashinfer_mla = envs.VLLM_ATTENTION_BACKEND == "FLASHINFER_MLA"
+
+            from vllm.attention.ops.flashmla import is_flashmla_dense_supported
+
+            if (
+                use_flashmla
+                and is_flashmla_dense_supported()[0]
+                and cache_config.block_size % 64 != 0
+            ):
+                cache_config.block_size = 64
+                logger.info("Forcing kv cache block size to 64 for FlashMLA backend.")
+
+            if use_cutlass_mla and cache_config.block_size % 128 != 0:
+                cache_config.block_size = 128
+                logger.info(
+                    "Forcing kv cache block size to 128 for CUTLASS_MLA backend."
+                )
+
+            if (
+                use_flashinfer_mla
+                and cache_config.block_size != 32
+                and cache_config.block_size % 64 != 0
+            ):
+                cache_config.block_size = 64
+                logger.info(
+                    "Forcing kv cache block size to 64 for FlashInferMLA backend."
+                )
+
+            # TODO(Chen): remove this hacky code
+            if use_sparse and cache_config.block_size != 64:
+                cache_config.block_size = 64
+                logger.info(
+                    "Forcing kv cache block size to 64 for FlashMLASparse backend."
+                )
         # lazy import to avoid circular import
         from vllm.config import CUDAGraphMode
 
@@ -196,14 +286,24 @@ class PlatformFL(Platform):
     
     @classmethod
     def support_static_graph_mode(cls) -> bool:
+        # Ascend NPU doesn't support static graph mode
+        if cls._get_device_info().is_npu():
+            return False
         return True
     
     @classmethod
     def support_hybrid_kv_cache(cls) -> bool:
-        return True
+        # Ascend NPU supports hybrid kv cache
+        if cls._get_device_info().is_npu():
+            return True
+        return False
 
     ### NOTE(lms): will effect compile result
     @classmethod
     def opaque_attention_op(cls) -> bool:
+        # Ascend NPU should use direct call (like vllm-ascend)
+        # to let torch.compile handle attention properly
+        if cls._get_device_info().is_npu():
+            return False
         return True
     
