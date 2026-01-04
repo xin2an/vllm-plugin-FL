@@ -44,14 +44,10 @@ def is_310p() -> bool:
     global _IS_310P
     if _IS_310P is None:
         try:
-            import importlib
-            if importlib.util.find_spec("vllm_ascend") is not None:
-                from vllm_ascend import _build_info
-                _IS_310P = _build_info.__soc_version__.lower().startswith(
-                    "ascend310p")
-            else:
-                _IS_310P = False
-        except (ImportError, AttributeError):
+            import torch_npu
+            soc_version = torch_npu.npu.get_soc_version()
+            _IS_310P = "310p" in soc_version.lower()
+        except (ImportError, AttributeError, RuntimeError):
             _IS_310P = False
     return _IS_310P
 
@@ -60,9 +56,11 @@ def weak_ref_tensor(tensor: Any) -> Any:
     """Create weak reference to a single tensor (NPU only)."""
     if isinstance(tensor, torch.Tensor):
         try:
-            return torch.ops._C_ascend.weak_ref_tensor(tensor)
-        except (AttributeError, RuntimeError):
-            return tensor
+            import torch_npu
+            if hasattr(torch_npu, 'npu_weak_ref_tensor'):
+                return torch_npu.npu_weak_ref_tensor(tensor)
+        except (ImportError, AttributeError, RuntimeError):
+            pass
     return tensor
 
 

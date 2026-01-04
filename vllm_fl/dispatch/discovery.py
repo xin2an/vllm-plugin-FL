@@ -1,3 +1,5 @@
+# Copyright (c) 2025 BAAI. All rights reserved.
+
 """
 Plugin discovery for vllm-plugin-FL dispatch system.
 

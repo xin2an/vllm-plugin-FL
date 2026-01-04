@@ -1,3 +1,5 @@
+# Copyright (c) 2025 BAAI. All rights reserved.
+
 """
 Convenience API for operator dispatch.
 

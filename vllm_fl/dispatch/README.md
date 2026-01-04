@@ -380,8 +380,87 @@ with with_denied_vendors({"npu", "cuda"}):
 | `policy.py` | SelectionPolicy and context managers |
 | `discovery.py` | Plugin discovery (entry points + env) |
 | `manager.py` | OpManager (main dispatch logic) |
-| `builtin_ops.py` | Built-in implementations (FlagOS, CUDA, NPU, PyTorch) |
+| `builtin_ops.py` | Entry point for backend registration |
 | `ops.py` | Convenience API functions |
+| `backends/` | Backend implementations directory |
+| `backends/__init__.py` | Backend module exports |
+| `backends/flagos.py` | DEFAULT implementations (FlagOS/flag_gems) |
+| `backends/cuda.py` | VENDOR implementations (vLLM CUDA kernels) |
+| `backends/npu.py` | VENDOR implementations (torch_npu for Ascend) |
+| `backends/reference.py` | REFERENCE implementations (pure PyTorch) |
+
+## Adding New Operators
+
+To add a new operator implementation:
+
+1. **Choose the appropriate backend file** in `backends/`:
+   - `flagos.py` for FlagOS/Triton implementations
+   - `cuda.py` for CUDA-specific implementations
+   - `npu.py` for NPU-specific implementations
+   - `reference.py` for pure PyTorch fallback
+
+2. **Add the implementation function**:
+   ```python
+   def _my_op_backend(x: torch.Tensor, ...) -> torch.Tensor:
+       """My operator using backend."""
+       ...
+
+   _my_op_backend._is_available = lambda: check_availability()
+   ```
+
+3. **Add to `_IMPLEMENTATIONS` list**:
+   ```python
+   _IMPLEMENTATIONS = [
+       # ... existing implementations ...
+       OpImpl(
+           op_name="my_op",
+           impl_id="default.flagos",  # or vendor.cuda, etc.
+           kind=OpImplKind.DEFAULT,
+           fn=_my_op_backend,
+           priority=100,
+           description="My op using backend",
+       ),
+   ]
+   ```
+
+## Adding New Backends
+
+To add a new backend (e.g., for a new hardware vendor):
+
+1. **Create a new file** `backends/my_vendor.py`:
+   ```python
+   from ..types import OpImpl, OpImplKind
+
+   def _my_op_vendor(x, ...):
+       ...
+
+   _IMPLEMENTATIONS = [
+       OpImpl(
+           op_name="my_op",
+           impl_id="vendor.my_vendor",
+           kind=OpImplKind.VENDOR,
+           vendor="my_vendor",
+           fn=_my_op_vendor,
+           priority=100,
+           description="My op using my_vendor",
+       ),
+   ]
+
+   def register(registry):
+       for impl in _IMPLEMENTATIONS:
+           registry.register_impl(impl, skip_duplicate=True)
+
+   def get_implementations():
+       return list(_IMPLEMENTATIONS)
+   ```
+
+2. **Update `backends/__init__.py`**:
+   ```python
+   def register_all_backends(registry):
+       from . import cuda, flagos, npu, reference, my_vendor
+       # ...
+       my_vendor.register(registry)
+   ```
 
 ## Debugging
 

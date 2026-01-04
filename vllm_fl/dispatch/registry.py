@@ -1,3 +1,5 @@
+# Copyright (c) 2025 BAAI. All rights reserved.
+
 """
 Thread-safe operator registry for vllm-plugin-FL.
 

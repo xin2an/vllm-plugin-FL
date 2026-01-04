@@ -1,3 +1,5 @@
+# Copyright (c) 2025 BAAI. All rights reserved.
+
 """
 vllm-plugin-FL Dispatch System
 
