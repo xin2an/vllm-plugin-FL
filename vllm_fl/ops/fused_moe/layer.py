@@ -232,3 +232,4 @@ class FusedMoEFL(FusedMoE):
         else:
             zero_expert_result = None
         return topk_weights, topk_ids, zero_expert_result
+    FusedMoE.select_experts = select_experts

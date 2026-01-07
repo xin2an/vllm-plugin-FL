@@ -169,8 +169,8 @@ class PlatformFL(Platform):
         selected_backend: "AttentionBackendEnum",
         attn_selector_config: "AttentionSelectorConfig",
     ) -> list[str]:
-        from vllm_fl.attention.custom_attention import register_attention
-        register_attention()
+        # from vllm_fl.attention.custom_attention import register_attention
+        # register_attention()
         device_capability = cls.get_device_capability()
         
         if selected_backend is None:
