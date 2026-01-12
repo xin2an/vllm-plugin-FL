@@ -30,9 +30,8 @@ A vLLM plugin built on the FlagOS unified multi-chip backend.
 
     2.1 Clone the repository:
     ```sh
-    git clone https://github.com/flagos-ai/FlagCX.git
-    cd FlagCX
-    git checkout v0.3.0
+    git clone GitHub - flagos-ai/FlagCX
+    git checkout -b v0.7.0
     ```
 
     2.2 Build the library with different flags targeting to different platforms:
@@ -45,7 +44,7 @@ A vLLM plugin built on the FlagOS unified multi-chip backend.
     export FLAGCX_PATH="$pwd"
     ```
 
-    2.4 Installation FlagGems
+    3.4 Installation FlagCX
     ```sh
     cd plugin/torch/
     python setup.py develop --adaptor nvidia/ascend
