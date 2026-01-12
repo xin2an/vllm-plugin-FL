@@ -1,16 +1,16 @@
 # Copyright (c) 2025 BAAI. All rights reserved.
 
 """
-FlagGems backend operator registrations.
+Ascend backend operator registrations.
 
-This module registers all DEFAULT (FlagGems) implementations.
+This module registers all VENDOR (Ascend) implementations.
 """
 
 from __future__ import annotations
 
 import functools
 
-from ...types import OpImpl, BackendImplKind, BackendPriority
+from ....types import OpImpl, BackendImplKind, BackendPriority
 
 
 def _bind_is_available(fn, is_available_fn):
@@ -26,43 +26,43 @@ def _bind_is_available(fn, is_available_fn):
 
 def register_builtins(registry) -> None:
     """
-    Register all FlagGems (DEFAULT) operator implementations.
+    Register all Ascend (VENDOR) operator implementations.
 
     Args:
         registry: Registry to register into
     """
-    from .flaggems import FlagGemsBackend
+    from .ascend import AscendBackend
 
-    backend = FlagGemsBackend()
+    backend = AscendBackend()
     is_avail = backend.is_available
 
     impls = [
         # Activation
         OpImpl(
             op_name="silu_and_mul",
-            impl_id="default.flaggems",
-            kind=BackendImplKind.DEFAULT,
+            impl_id="vendor.ascend",
+            kind=BackendImplKind.VENDOR,
             fn=_bind_is_available(backend.silu_and_mul, is_avail),
-            vendor=None,
-            priority=BackendPriority.DEFAULT,
+            vendor="ascend",
+            priority=BackendPriority.VENDOR,
         ),
         # Normalization
         OpImpl(
             op_name="rmsnorm",
-            impl_id="default.flaggems",
-            kind=BackendImplKind.DEFAULT,
+            impl_id="vendor.ascend",
+            kind=BackendImplKind.VENDOR,
             fn=_bind_is_available(backend.rmsnorm, is_avail),
-            vendor=None,
-            priority=BackendPriority.DEFAULT,
+            vendor="ascend",
+            priority=BackendPriority.VENDOR,
         ),
         # Rotary Embedding
         OpImpl(
             op_name="rotary_embedding",
-            impl_id="default.flaggems",
-            kind=BackendImplKind.DEFAULT,
+            impl_id="vendor.ascend",
+            kind=BackendImplKind.VENDOR,
             fn=_bind_is_available(backend.rotary_embedding, is_avail),
-            vendor=None,
-            priority=BackendPriority.DEFAULT,
+            vendor="ascend",
+            priority=BackendPriority.VENDOR,
         ),
     ]
 

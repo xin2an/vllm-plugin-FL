@@ -27,6 +27,17 @@ class BackendImplKind(str, Enum):
         return self.value
 
 
+class BackendPriority:
+    """
+    Standard priority values for different backend types.
+
+    Higher priority implementations are selected first when available.
+    """
+    DEFAULT = 150     # Default implementations (FlagGems)
+    VENDOR = 100      # Vendor-specific implementations
+    REFERENCE = 50    # Reference implementations (PyTorch, lowest)
+
+
 @dataclass(frozen=True)
 class OpImpl:
     """

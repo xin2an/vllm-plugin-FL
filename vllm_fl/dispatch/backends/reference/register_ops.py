@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import functools
 
-from ...types import OpImpl, BackendImplKind
+from ...types import OpImpl, BackendImplKind, BackendPriority
 
 
 def _bind_is_available(fn, is_available_fn):
@@ -44,7 +44,7 @@ def register_builtins(registry) -> None:
             kind=BackendImplKind.REFERENCE,
             fn=_bind_is_available(backend.silu_and_mul, is_avail),
             vendor=None,
-            priority=50,
+            priority=BackendPriority.REFERENCE,
         ),
         # Normalization
         OpImpl(
@@ -53,7 +53,7 @@ def register_builtins(registry) -> None:
             kind=BackendImplKind.REFERENCE,
             fn=_bind_is_available(backend.rmsnorm, is_avail),
             vendor=None,
-            priority=50,
+            priority=BackendPriority.REFERENCE,
         ),
         # Rotary Embedding
         OpImpl(
@@ -62,7 +62,7 @@ def register_builtins(registry) -> None:
             kind=BackendImplKind.REFERENCE,
             fn=_bind_is_available(backend.rotary_embedding, is_avail),
             vendor=None,
-            priority=50,
+            priority=BackendPriority.REFERENCE,
         ),
     ]
 

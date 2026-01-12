@@ -32,7 +32,7 @@ Environment Variables:
         - Selected backend for each operator call
 """
 
-from .types import OpImpl, BackendImplKind, match_token
+from .types import OpImpl, BackendImplKind, BackendPriority, match_token
 from .registry import OpRegistry, OpRegistrySnapshot
 from .policy import (
     SelectionPolicy,
@@ -92,6 +92,7 @@ __all__ = [
     # Types
     "OpImpl",
     "BackendImplKind",
+    "BackendPriority",
     "match_token",
     # Registry
     "OpRegistry",

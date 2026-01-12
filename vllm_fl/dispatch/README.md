@@ -1,6 +1,6 @@
 # Dispatch Mechanism
 
-This directory implements the operator dispatch mechanism for vllm-plugin-FL, providing a flexible operator dispatch system that selects between different backend implementations (FlagGems, PyTorch, etc.) based on availability and policy configuration.
+This directory implements the operator dispatch mechanism for vllm-plugin-FL, providing a flexible operator dispatch system that selects between different backend implementations (FlagGems, PyTorch, vendor-specific) based on availability and policy configuration.
 
 ## Directory Structure
 
@@ -11,46 +11,29 @@ dispatch/
 ├── registry.py              # Thread-safe operator registry
 ├── policy.py                # Selection policy management
 ├── manager.py               # Core dispatch manager
-├── builtin_ops.py           # Built-in operator registration (calls backend register_ops)
-├── ops.py                   # Backend base interface (VLLMFLBackendBase)
+├── builtin_ops.py           # Built-in operator registration
+├── ops.py                   # Backend base interface
 ├── discovery.py             # Plugin discovery mechanism
 ├── logger_manager.py        # Centralized logging configuration
 └── backends/                # Backend implementations
-    ├── __init__.py
     ├── base.py              # Backend abstract base class
-    ├── flaggems/            # FlagGems backend
-    │   ├── __init__.py
-    │   ├── flaggems.py      # Backend class
-    │   ├── register_ops.py  # Operator registration
-    │   └── impl/            # Operator implementations
-    │       ├── __init__.py
-    │       ├── activation.py
-    │       ├── normalization.py
-    │       └── rotary.py
-    ├── reference/           # Reference backend (PyTorch)
-    │   ├── __init__.py
-    │   ├── reference.py     # Backend class
-    │   ├── register_ops.py  # Operator registration
-    │   └── impl/            # Operator implementations
-    │       ├── __init__.py
-    │       ├── activation.py
-    │       ├── normalization.py
-    │       └── rotary.py
-    └── vendor/              # Vendor-specific backends
-        └── __init__.py      # (Add CUDA, etc. as needed)
+    ├── flaggems/            # FlagGems backend (DEFAULT, priority 150)
+    ├── reference/           # Reference backend (PyTorch, priority 50)
+    └── vendor/              # Vendor-specific backends (priority 100)
+        └── ascend/          # Example: Huawei Ascend backend
 ```
 
 ## Core Concepts
 
-### 1. Backend Implementation Kind (BackendImplKind)
+### 1. Backend Implementation Kind
 
 - **DEFAULT**: Default implementation (FlagGems), priority 150
+- **VENDOR**: Vendor-specific implementation (e.g., Ascend), priority 100
 - **REFERENCE**: Reference implementation (PyTorch native), priority 50
-- **VENDOR**: Vendor-specific implementation (e.g., CUDA), requires vendor name
 
 ### 2. Operator Implementation (OpImpl)
 
-Each operator implementation contains the following attributes:
+Each operator implementation contains:
 - `op_name`: Operator name (e.g., "silu_and_mul", "rmsnorm")
 - `impl_id`: Unique implementation identifier (e.g., "default.flaggems")
 - `kind`: Implementation type
@@ -58,9 +41,9 @@ Each operator implementation contains the following attributes:
 - `vendor`: Vendor name (required for VENDOR type)
 - `priority`: Selection priority (higher value = preferred)
 
-### 3. Selection Policy (SelectionPolicy)
+### 3. Selection Policy
 
-Policy controls operator implementation selection behavior:
+Policy controls operator implementation selection:
 - `prefer`: Preferred implementation type
 - `strict`: Strict mode, whether to raise error when primary implementation fails
 - `per_op_order`: Custom selection order for each operator
@@ -137,12 +120,10 @@ Supports temporary policy override in code:
 
 ```python
 from vllm_fl.dispatch import (
-    policy_context,
     with_strict_mode,
     with_preference,
     with_allowed_vendors,
     with_denied_vendors,
-    SelectionPolicy,
 )
 
 # Temporarily enable strict mode
@@ -156,26 +137,17 @@ with with_preference("reference"):
 # Temporarily restrict allowed vendors
 with with_allowed_vendors("vendor_a"):
     result = call_op("rotary_embedding", query, key, cos, sin, position_ids)
-
-# Use custom policy
-custom_policy = SelectionPolicy.from_dict(
-    prefer="flaggems",
-    strict=True,
-    deny_vendors={"vendor_x"},
-)
-with policy_context(custom_policy):
-    result = call_op("silu_and_mul", x)
 ```
 
 ## Supported Operators
 
 Currently supported operators:
 
-| Operator | Description | FlagGems | Reference |
-|----------|-------------|----------|-----------|
-| `silu_and_mul` | SiLU activation + element-wise multiplication | ✓ | ✓ |
-| `rmsnorm` | RMS normalization | ✓ | ✓ |
-| `rotary_embedding` | Rotary position embedding | ✓ | ✓ |
+| Operator | Description | FlagGems | Reference | Vendor |
+|----------|-------------|----------|-----------|--------|
+| `silu_and_mul` | SiLU activation + element-wise multiplication | ✓ | ✓ | ✓ |
+| `rmsnorm` | RMS normalization | ✓ | ✓ | ✓ |
+| `rotary_embedding` | Rotary position embedding | ✓ | ✓ | ✓ |
 
 ## Selection Process
 
@@ -196,125 +168,175 @@ Op 'rmsnorm' using 'default.flaggems' (kind=flaggems, vendor=None)
 Op 'rmsnorm' fallback to 'reference.torch' (kind=reference, vendor=None)
 ```
 
-## Extending with New Operators
+## Extending the System
 
-When adding a new operator (e.g., `layernorm`), modify the following files:
+### Adding New Operators
 
-| File | Changes |
-|------|---------|
-| `backends/flaggems/impl/normalization.py` | Add FlagGems implementation |
-| `backends/flaggems/flaggems.py` | Add method to backend class |
-| `backends/flaggems/register_ops.py` | Register OpImpl |
-| `backends/reference/impl/normalization.py` | Add PyTorch implementation |
-| `backends/reference/reference.py` | Add method to backend class |
-| `backends/reference/register_ops.py` | Register OpImpl |
-| `ops.py` | Add abstract method declaration |
+When adding a new operator, modify these files:
+- `backends/flaggems/impl/*.py` - Add FlagGems implementation
+- `backends/flaggems/flaggems.py` - Add method to backend class
+- `backends/flaggems/register_ops.py` - Register OpImpl
+- `backends/reference/impl/*.py` - Add PyTorch implementation
+- `backends/reference/reference.py` - Add method to backend class
+- `backends/reference/register_ops.py` - Register OpImpl
+- `ops.py` - Add abstract method declaration
 
-## Extending with New Backends
+### Adding Vendor Backends
 
-### 1. Create Backend Directory Structure
+The dispatch system supports three ways to integrate vendor backends:
 
+1. **Built-in vendor backends** - Located in `backends/vendor/` (recommended for core vendors)
+2. **External plugin packages** - Distributed as separate Python packages
+3. **Environment-based plugins** - Loaded via `VLLM_FL_PLUGIN_MODULES`
+
+#### Option 1: Built-in Vendor Backend
+
+Directory structure:
 ```
-backends/my_backend/
+backends/vendor/<vendor_name>/
 ├── __init__.py
-├── my_backend.py      # Backend class
-├── register_ops.py    # Operator registration
-└── impl/              # Operator implementations
+├── <vendor_name>.py        # Backend class
+├── register_ops.py         # Registration function
+└── impl/                   # Operator implementations
     ├── __init__.py
     ├── activation.py
-    └── ...
+    ├── normalization.py
+    └── rotary.py
 ```
 
-### 2. Implement Backend Class
+**Step 1: Create Backend Class** (`<vendor_name>.py`):
 
 ```python
-# backends/my_backend/my_backend.py
-from ..base import Backend
+from ...base import Backend
 
-class MyBackend(Backend):
+class <VendorName>Backend(Backend):
+    _available = None
+
     @property
     def name(self) -> str:
-        return "my_backend"
+        return "<vendor_name>"
+
+    @property
+    def vendor(self) -> str:
+        return "<vendor_name>"  # Required for vendor backends
 
     def is_available(self) -> bool:
-        try:
-            import my_library
-            return True
-        except ImportError:
-            return False
+        if <VendorName>Backend._available is None:
+            try:
+                import <vendor_library>
+                <VendorName>Backend._available = True
+            except ImportError:
+                <VendorName>Backend._available = False
+        return <VendorName>Backend._available
 
     def silu_and_mul(self, x):
-        from .impl.activation import silu_and_mul_my_backend
-        return silu_and_mul_my_backend(x)
+        from .impl.activation import silu_and_mul_<vendor>
+        return silu_and_mul_<vendor>(x)
 ```
 
-### 3. Create Registration Module
+**Step 2: Create Registration Module** (`register_ops.py`):
 
 ```python
-# backends/my_backend/register_ops.py
-from ...types import OpImpl, BackendImplKind
+from ....types import OpImpl, BackendImplKind, BackendPriority
 
-def register_builtins(registry) -> None:
-    from .my_backend import MyBackend
-
-    backend = MyBackend()
-    is_avail = backend.is_available
+def register_builtins(registry):
+    from .<vendor_name> import <VendorName>Backend
+    backend = <VendorName>Backend()
 
     impls = [
         OpImpl(
             op_name="silu_and_mul",
-            impl_id="default.my_backend",
-            kind=BackendImplKind.DEFAULT,
-            fn=_bind_is_available(backend.silu_and_mul, is_avail),
-            priority=100,
+            impl_id="vendor.<vendor_name>",
+            kind=BackendImplKind.VENDOR,
+            fn=backend.silu_and_mul,
+            vendor="<vendor_name>",
+            priority=BackendPriority.VENDOR,  # 100
         ),
     ]
-
     registry.register_many(impls)
 ```
 
-### 4. Update builtin_ops.py
+**Step 3: Register in builtin_ops.py**:
 
 ```python
-# In builtin_ops.py, add:
 try:
-    from .backends.my_backend.register_ops import register_builtins as register_my_backend
-    register_my_backend(registry)
+    from .backends.vendor.<vendor_name>.register_ops import register_builtins as register_<vendor>
+    register_<vendor>(registry)
 except Exception as e:
-    logger.warning(f"Failed to register MyBackend operators: {e}")
+    logger.debug(f"<Vendor> operators not available: {e}")
 ```
 
-## Plugin Discovery
+#### Option 2: External Plugin Package
 
-External plugins can register operators via:
-
-### 1. Entry Points (Recommended)
+Create a separate package with entry points:
 
 ```python
-# In your plugin's setup.py or pyproject.toml
-[project.entry-points."vllm_fl.plugin"]
-my_plugin = "my_plugin_package:register"
+# setup.py
+setup(
+    name="vllm-plugin-<vendor>",
+    entry_points={
+        "vllm_fl.plugin": [
+            "<vendor> = vllm_fl_<vendor>.register_ops:register_builtins",
+        ],
+    },
+)
 ```
 
-```python
-# my_plugin_package/__init__.py
-def register(registry):
-    # Register your operators
-    registry.register_impl(OpImpl(...))
+Install and use:
+```bash
+pip install vllm-plugin-<vendor>
+# Plugin auto-discovered via entry points
 ```
 
-### 2. Environment Variable
+#### Option 3: Environment-based Plugin
 
 ```bash
-export VLLM_FL_PLUGIN_MODULES=my_plugin_module
+export VLLM_FL_PLUGIN_MODULES=my_custom_backend.register_ops
 ```
 
+The module should provide a `register_builtins(registry)` function.
+
+#### Priority Levels
+
+Use constants from `types.py`:
+- `BackendPriority.DEFAULT` (150) - FlagGems
+- `BackendPriority.VENDOR` (100) - Vendor backends
+- `BackendPriority.REFERENCE` (50) - PyTorch
+
+#### Testing Your Backend
+
 ```python
-# my_plugin_module.py
-def vllm_fl_register(registry):
-    # Register your operators
-    pass
+from vllm_fl.dispatch import get_default_manager
+
+manager = get_default_manager()
+manager.ensure_initialized()
+
+# Check registration
+snap = manager.registry.snapshot()
+for op_name, impls in snap.impls_by_op.items():
+    for impl in impls:
+        if impl.vendor == "<vendor_name>":
+            print(f"{op_name}: {impl.impl_id}, available={impl.is_available()}")
 ```
+
+Enable debug output:
+```bash
+export VLLM_FL_LOG_LEVEL=DEBUG
+```
+
+#### Vendor Backend Checklist
+
+- [ ] Backend class inherits from `Backend`
+- [ ] `vendor` property returns vendor name (not None)
+- [ ] `is_available()` checks hardware/library availability
+- [ ] `register_ops.py` uses `BackendImplKind.VENDOR`
+- [ ] `impl_id` follows format: `vendor.<vendor_name>`
+- [ ] Priority set to `BackendPriority.VENDOR` (100)
+- [ ] Error handling for missing dependencies
+
+#### Current Vendor Backends
+
+- **Ascend** (Huawei) - Example implementation in `backends/vendor/ascend/`
 
 ## Multi-Process Safety
 
