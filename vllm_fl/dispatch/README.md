@@ -20,7 +20,7 @@ dispatch/
     ├── flaggems/            # FlagGems backend (DEFAULT, priority 150)
     ├── reference/           # Reference backend (PyTorch, priority 50)
     └── vendor/              # Vendor-specific backends (priority 100)
-        └── ascend/          # Example: Huawei Ascend backend
+        └── template/        # Template for creating new vendor backends
 ```
 
 ## Core Concepts
@@ -28,7 +28,7 @@ dispatch/
 ### 1. Backend Implementation Kind
 
 - **DEFAULT**: Default implementation (FlagGems), priority 150
-- **VENDOR**: Vendor-specific implementation (e.g., Ascend), priority 100
+- **VENDOR**: Vendor-specific implementation, priority 100
 - **REFERENCE**: Reference implementation (PyTorch native), priority 50
 
 ### 2. Operator Implementation (OpImpl)
@@ -336,7 +336,7 @@ export VLLM_FL_LOG_LEVEL=DEBUG
 
 #### Current Vendor Backends
 
-- **Ascend** (Huawei) - Example implementation in `backends/vendor/ascend/`
+See `backends/vendor/template/` for a template to create new vendor backends.
 
 ## Multi-Process Safety
 
