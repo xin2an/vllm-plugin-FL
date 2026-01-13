@@ -1,4 +1,4 @@
-# Copyright (c) 2025 BAAI. All rights reserved.
+# Copyright (c) 2026 BAAI. All rights reserved.
 
 """
 Core operator dispatch manager.
@@ -136,24 +136,24 @@ class OpManager:
         """Print detailed list of registered operators and their implementations."""
         snap = self._registry.snapshot()
 
-        print("\n" + "="*80)
-        print("VLLM-FL Dispatch: Registered Operators")
-        print("="*80)
+        logger.info("\n" + "="*80)
+        logger.info("VLLM-FL Dispatch: Registered Operators")
+        logger.info("="*80)
 
         # Sort operators by name for consistent output
         sorted_ops = sorted(snap.impls_by_op.items())
 
         for op_name, impls in sorted_ops:
-            print(f"\n[Operator: {op_name}]")
+            logger.info(f"\n[Operator: {op_name}]")
             # Sort implementations by priority (highest first)
             sorted_impls = sorted(impls, key=lambda x: (x.priority, x.impl_id), reverse=True)
 
             for impl in sorted_impls:
                 available = "✓" if impl.is_available() else "✗"
                 vendor_info = f", vendor={impl.vendor}" if impl.vendor else ""
-                print(f"  {available} {impl.impl_id} (kind={impl.kind.value}, priority={impl.priority}{vendor_info})")
+                logger.info(f"  {available} {impl.impl_id} (kind={impl.kind.value}, priority={impl.priority}{vendor_info})")
 
-        print("\n" + "="*80 + "\n")
+        logger.info("\n" + "="*80 + "\n")
 
     def _matches_vendor_filters(self, impl: OpImpl, policy: SelectionPolicy) -> bool:
         """Check if implementation matches policy vendor filters."""
@@ -269,7 +269,7 @@ class OpManager:
         # Print selected backend if debug is enabled
         if _DISPATCH_DEBUG:
             vendor_info = f", vendor={chosen.vendor}" if chosen.vendor else ""
-            print(f"[DISPATCH] Op '{op_name}' -> '{chosen.impl_id}' (kind={chosen.kind.value}{vendor_info})")
+            logger.debug(f"[DISPATCH] Op '{op_name}' -> '{chosen.impl_id}' (kind={chosen.kind.value}{vendor_info})")
 
         return chosen.fn
 

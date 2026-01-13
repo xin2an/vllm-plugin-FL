@@ -1,4 +1,4 @@
-# Copyright (c) 2025 BAAI. All rights reserved.
+# Copyright (c) 2026 BAAI. All rights reserved.
 
 """
 Reference backend implementation using PyTorch.
@@ -14,7 +14,7 @@ from typing import Optional, Union
 
 import torch
 
-from ..base import Backend
+from vllm_fl.dispatch.backends.base import Backend
 
 
 class ReferenceBackend(Backend):

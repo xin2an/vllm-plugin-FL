@@ -50,6 +50,96 @@ Policy controls operator implementation selection:
 - `deny_vendors`: List of denied vendors
 - `allow_vendors`: Whitelist of allowed vendors
 
+## Architecture Overview
+
+### Dispatch Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         User Code                                │
+│                  call_op("rmsnorm", x, ...)                      │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                       OpManager                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ 1. Check Cache                                            │  │
+│  │ 2. Get Policy (from env or context)                      │  │
+│  │ 3. Query Registry for all implementations                │  │
+│  │ 4. Filter by vendor allow/deny list                      │  │
+│  │ 5. Check availability (is_available())                   │  │
+│  │ 6. Sort by priority & selection order                    │  │
+│  │ 7. Cache & return selected implementation                │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        OpRegistry                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   FlagGems   │  │    Vendor    │  │  Reference   │         │
+│  │ Priority: 150│  │ Priority: 100│  │ Priority: 50 │         │
+│  └──────────────┘  └──────────────┘  └──────────────┘         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Priority Selection Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    VLLM_FL_PREFER=flaggems                       │
+│                    (Default Behavior)                            │
+└─────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+        ┌────────────────────┴────────────────────┐
+        │                                          │
+        ▼                                          ▼
+┌──────────────┐  Available?  ┌──────────────┐  Available?
+│   FlagGems   │─────No──────▶│    Vendor    │─────No──────▶
+│ Priority: 150│              │ Priority: 100│
+└──────────────┘              └──────────────┘
+        │                              │
+       Yes                            Yes
+        │                              │
+        ▼                              ▼
+    ✓ Selected                    ✓ Selected
+
+                                                  ┌──────────────┐
+                                                  │  Reference   │
+                                                  │ Priority: 50 │
+                                                  └──────────────┘
+                                                         │
+                                                        Yes
+                                                         │
+                                                         ▼
+                                                    ✓ Selected
+```
+
+### Plugin Integration Points
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Plugin Discovery                              │
+│                                                                   │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐   │
+│  │   Built-in     │  │  Entry Points  │  │  Environment   │   │
+│  │   backends/    │  │  (setuptools)  │  │  PLUGIN_MODULES│   │
+│  │   vendor/      │  │                │  │                │   │
+│  └────────┬───────┘  └────────┬───────┘  └────────┬───────┘   │
+│           │                   │                    │            │
+│           └───────────────────┴────────────────────┘            │
+│                               │                                  │
+└───────────────────────────────┼──────────────────────────────────┘
+                                │
+                                ▼
+                        ┌───────────────┐
+                        │   Registry    │
+                        │  register()   │
+                        └───────────────┘
+```
+
 ## Quick Start
 
 ### Basic Usage
@@ -82,15 +172,15 @@ result = manager.call("silu_and_mul", x)
 
 ## Environment Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `VLLM_FL_PREFER` | Preferred backend | `flaggems`, `vendor`, `reference` |
-| `VLLM_FL_STRICT` | Strict mode | `1` or `0` |
-| `VLLM_FL_DENY_VENDORS` | Denied vendors list | `vendor1,vendor2` |
-| `VLLM_FL_ALLOW_VENDORS` | Allowed vendors whitelist | `vendor1,vendor2` |
-| `VLLM_FL_PER_OP` | Per-operator selection order | `op1=a\|b\|c;op2=x\|y` |
-| `VLLM_FL_PLUGIN_MODULES` | Plugin modules to load | `my_plugin,another_plugin` |
-| `VLLM_FL_LOG_LEVEL` | Log level | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| Variable | Description | Example | Behavior |
+|----------|-------------|---------|----------|
+| `VLLM_FL_PREFER` | Preferred backend (sets selection order) | `flaggems`, `vendor`, `reference` | Defines priority order, falls back if unavailable |
+| `VLLM_FL_STRICT` | Enable strict mode (auto-fallback on failure) | `1` or `0` | When `1`, tries alternatives if primary fails |
+| `VLLM_FL_DENY_VENDORS` | Denied vendors list (blacklist) | `vendor1,vendor2` | Excludes specified vendors from selection |
+| `VLLM_FL_ALLOW_VENDORS` | Allowed vendors whitelist | `vendor1,vendor2` | Only allows specified vendors (if set) |
+| `VLLM_FL_PER_OP` | Per-operator selection order | `op1=a\|b\|c;op2=x\|y` | Overrides default order for specific ops |
+| `VLLM_FL_PLUGIN_MODULES` | Plugin modules to load | `my_plugin,another_plugin` | Loads external plugin modules |
+| `VLLM_FL_LOG_LEVEL` | Log level | `DEBUG`, `INFO`, `WARNING`, `ERROR` | Controls logging verbosity |
 
 ### Examples
 
@@ -113,6 +203,39 @@ export VLLM_FL_PLUGIN_MODULES=my_custom_backend
 # Set log level
 export VLLM_FL_LOG_LEVEL=DEBUG
 ```
+
+### Environment Variable Priority
+
+The dispatch system applies environment variables in the following order:
+
+1. **`VLLM_FL_PER_OP`** - Highest priority, overrides default order for specific operators
+2. **`VLLM_FL_ALLOW_VENDORS`** - Whitelist filter (if set, only these vendors are allowed)
+3. **`VLLM_FL_DENY_VENDORS`** - Blacklist filter (these vendors are excluded)
+4. **`VLLM_FL_PREFER`** - Default selection order for all operators
+5. **`BackendPriority`** - Code-defined priority (used for tie-breaking within same kind)
+
+**Priority values are spaced by 50 to allow future insertion of intermediate priorities:**
+- `BackendPriority.DEFAULT` = 150 (FlagGems)
+- `BackendPriority.VENDOR` = 100 (Vendor-specific)
+- `BackendPriority.REFERENCE` = 50 (PyTorch)
+
+#### Example: Combined Environment Variables
+
+```bash
+export VLLM_FL_PREFER=flaggems                    # Default: flaggems → vendor → reference
+export VLLM_FL_DENY_VENDORS=vendor_a              # Exclude vendor_a
+export VLLM_FL_PER_OP="rmsnorm=vendor|reference"  # Override for rmsnorm only
+```
+
+**Result:**
+- **`rmsnorm` operator**: Uses `vendor → reference` order (PER_OP overrides PREFER), excluding vendor_a
+- **Other operators** (e.g., `silu_and_mul`): Uses `flaggems → vendor → reference` order (from PREFER), excluding vendor_a
+
+#### Important Notes
+
+- **`VLLM_FL_PREFER` sets preference, not exclusivity**: It defines the selection order but will fall back to other backends if the preferred one is unavailable.
+- **To force a specific backend**: Combine `PREFER` with `DENY_VENDORS` or use `PER_OP` to exclude unwanted backends.
+- **`VLLM_FL_STRICT=1`**: Enables automatic fallback when the primary implementation fails at runtime (not just unavailable).
 
 ## Policy Context Management
 
