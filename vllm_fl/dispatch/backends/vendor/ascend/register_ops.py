@@ -1,4 +1,4 @@
-# Copyright (c) 2025 BAAI. All rights reserved.
+# Copyright (c) 2026 BAAI. All rights reserved.
 
 """
 Ascend backend operator registrations.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import functools
 
-from ....types import OpImpl, BackendImplKind, BackendPriority
+from vllm_fl.dispatch.types import OpImpl, BackendImplKind, BackendPriority
 
 
 def _bind_is_available(fn, is_available_fn):

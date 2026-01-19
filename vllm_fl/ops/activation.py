@@ -12,5 +12,4 @@ class SiluAndMulFL(SiluAndMul):
     def forward_oot(self, x: torch.Tensor) -> torch.Tensor:
         return call_op("silu_and_mul", x)
 
-
 __all__ = ["SiluAndMulFL"]

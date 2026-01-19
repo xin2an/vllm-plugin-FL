@@ -1,4 +1,4 @@
-# Copyright (c) 2025 BAAI. All rights reserved.
+# Copyright (c) 2026 BAAI. All rights reserved.
 
 """
 Backend base interface definitions for vllm-plugin-FL dispatch.
