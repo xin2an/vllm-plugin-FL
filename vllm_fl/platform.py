@@ -122,7 +122,13 @@ class PlatformFL(Platform):
 
         cache_config = vllm_config.cache_config
         if cache_config and cache_config.block_size is None:
-            cache_config.block_size = 16
+            # Ascend NPU requires block_size to be a multiple of 128
+            # CUDA can use smaller block sizes like 16
+            if cls.device_type == "npu":
+                cache_config.block_size = 128
+                logger.info("Setting kv cache block size to 128 for Ascend NPU.")
+            else:
+                cache_config.block_size = 16
 
         # TODO(lucas): handle this more gracefully
         # Note: model_config may be None during testing
@@ -168,43 +174,70 @@ class PlatformFL(Platform):
         selected_backend: "AttentionBackendEnum",
         attn_selector_config: "AttentionSelectorConfig",
     ) -> list[str]:
-        # from vllm_fl.attention.custom_attention import register_attention
-        # register_attention()
-        device_capability = cls.get_device_capability()
-        
-        if selected_backend is None:
-            backend = _get_backend(
-                use_mla=False,
-                device_info=cls.device_info,
-            )[0]  # get the highest priority backend
-        else:
-            backend = selected_backend
-        
-        backend_class = backend.get_class()
-        invalid_reasons = backend_class.validate_configuration(
-                    device_capability=device_capability,
-                    **attn_selector_config._asdict(),
-                )
-        reasons_str = (
-            "{"
-            + ", ".join(
-                f"{backend.name}: [{', '.join(invalid_reasons)}]"
-            )
-            + "}"
-        )
-        config_str = attn_selector_config.__repr__()
-        logger.debug_once(
-            f"Some attention backends are not valid for {cls.device_name} with "
-            f"{config_str}. Reasons: {reasons_str}."
-        )
+        """
+        Get the attention backend class path using the dispatch mechanism.
 
-        logger.info_once(
-            "Using %s attention backend out of potential backends: %s",
-            backend.name,
-            tuple(backend.name),
-            scope="local",
-        )
-        return backend.get_path()
+        The dispatch mechanism automatically selects the appropriate backend
+        based on:
+        1. Hardware availability (NPU, CUDA, etc.)
+        2. User configuration via environment variables:
+           - VLLM_FL_PREFER: "vendor" | "reference" | "flaggems"
+           - VLLM_FL_ALLOW_VENDORS: Comma-separated list of allowed vendors
+           - VLLM_FL_DENY_VENDORS: Comma-separated list of denied vendors
+
+        Backend selection order (default):
+        - flaggems: FlagGems attention (may have issues)
+        - vendor: Platform-specific implementation (e.g., Ascend NPU)
+        - reference: vLLM native attention (PyTorch-based)
+
+        For NPU users, recommend setting VLLM_FL_PREFER=vendor to use
+        Ascend-optimized attention backend.
+        """
+        from vllm_fl.dispatch import call_op
+
+        use_mla = attn_selector_config.use_mla
+
+        try:
+            # Use dispatch mechanism to select the appropriate attention backend
+            # The dispatch system will automatically choose based on:
+            # 1. Backend availability (is_available check)
+            # 2. Policy configuration (VLLM_FL_PREFER, etc.)
+            # 3. Priority ordering (vendor > reference when vendor is preferred)
+            backend_path = call_op("attention_backend", use_mla=use_mla)
+
+            logger.info_once(
+                "Using attention backend via dispatch (use_mla=%s): %s",
+                use_mla, backend_path,
+                scope="local",
+            )
+            return backend_path
+
+        except RuntimeError as e:
+            # Fallback: if dispatch fails, use device-type based selection
+            logger.warning(
+                "Dispatch mechanism failed for attention_backend, "
+                "falling back to device-type based selection: %s", e
+            )
+
+            if cls.device_type == "npu":
+                if use_mla:
+                    backend_path = "vllm_fl.attention.mla.MLAFLBackend"
+                else:
+                    backend_path = "vllm_fl.attention.attention.AttentionFLBackend"
+            else:
+                # For CUDA and other devices, use vLLM native backend
+                from vllm.attention.backends.registry import AttentionBackendEnum
+                if use_mla:
+                    backend_path = AttentionBackendEnum.MLA.get_path()
+                else:
+                    backend_path = AttentionBackendEnum.FLASH_ATTN.get_path()
+
+            logger.info_once(
+                "Using fallback attention backend (use_mla=%s): %s",
+                use_mla, backend_path,
+                scope="local",
+            )
+            return backend_path
 
     @classmethod
     def get_vit_attn_backend(
@@ -287,6 +320,10 @@ class PlatformFL(Platform):
 
     @classmethod
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability:
+        # TODO(yxa): For NPU/Ascend devices, return None (no capability version like CUDA)
+        if cls.device_type == "npu":
+            return None
+        # For CUDA devices
         major, minor = torch.cuda.get_device_capability(device_id)
         return DeviceCapability(major=major, minor=minor)
     

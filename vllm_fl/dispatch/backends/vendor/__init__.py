@@ -26,13 +26,14 @@ try:
 except ImportError:
     pass
 
+# Import CUDA backend
+try:
+    from .cuda import CudaBackend
+    __all__.append("CudaBackend")
+except ImportError:
+    pass
+
 # Add more vendor backends here as they become available:
-# try:
-#     from .cuda import CudaBackend
-#     __all__.append("CudaBackend")
-# except ImportError:
-#     pass
-#
 # try:
 #     from .rocm import RocmBackend
 #     __all__.append("RocmBackend")

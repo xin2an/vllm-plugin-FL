@@ -124,3 +124,24 @@ class AscendBackend(Backend):
             rotary_interleaved=rotary_interleaved,
             inplace=inplace,
         )
+
+    def attention_backend(self, use_mla: bool = False) -> str:
+        """
+        Get the attention backend class path for Ascend NPU.
+
+        This method returns the native Ascend attention backend that uses
+        torch_npu operators (npu_fused_infer_attention_score, etc.)
+        instead of flag_gems operators.
+
+        Uses vllm_fl's native Ascend implementation which directly calls
+        torch_npu operators without depending on vllm-ascend package.
+
+        Args:
+            use_mla: Whether to use Multi-head Latent Attention (MLA)
+
+        Returns:
+            Fully qualified class path string
+        """
+        if use_mla:
+            return "vllm_fl.attention.backends.ascend.AscendMLABackend"
+        return "vllm_fl.attention.backends.ascend.AscendAttentionBackend"

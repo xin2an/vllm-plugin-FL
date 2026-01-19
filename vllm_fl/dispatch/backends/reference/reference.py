@@ -117,3 +117,23 @@ class ReferenceBackend(Backend):
             rotary_interleaved=rotary_interleaved,
             inplace=inplace,
         )
+
+    def attention_backend(self, use_mla: bool = False) -> str:
+        """
+        Get the attention backend class path for reference (vLLM native).
+
+        This method returns the vLLM native flash attention backend path,
+        which serves as a fallback implementation.
+
+        Args:
+            use_mla: Whether to use Multi-head Latent Attention (MLA)
+
+        Returns:
+            Fully qualified class path string (vLLM native backend)
+        """
+        # Return vLLM's native flash attention backend as reference
+        from vllm.attention.backends.registry import AttentionBackendEnum
+        if use_mla:
+            # vLLM native MLA backend
+            return AttentionBackendEnum.MLA.get_path()
+        return AttentionBackendEnum.FLASH_ATTN.get_path()

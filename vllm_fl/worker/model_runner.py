@@ -217,6 +217,45 @@ from vllm_fl.compilation.graph import GraphWrapper
 
 logger = init_logger(__name__)
 
+def _get_kv_cache_shape_compat(
+    attn_backend: type,
+    num_blocks: int,
+    block_size: int,
+    num_kv_heads: int,
+    head_size: int,
+    cache_dtype_str: str = "auto",
+) -> tuple[int, ...]:
+    """
+    Compatibility wrapper for get_kv_cache_shape that handles different backend signatures.
+
+    vLLM base class signature includes cache_dtype_str parameter, but some backends
+    (e.g., Ascend) don't support this parameter. This function tries the full signature
+    first, then falls back to the basic signature if TypeError is raised.
+    """
+    import inspect
+
+    # Check if the backend's get_kv_cache_shape accepts cache_dtype_str
+    sig = inspect.signature(attn_backend.get_kv_cache_shape)
+    params = sig.parameters
+
+    if 'cache_dtype_str' in params:
+        # Backend supports cache_dtype_str parameter
+        return attn_backend.get_kv_cache_shape(
+            num_blocks,
+            block_size,
+            num_kv_heads,
+            head_size,
+            cache_dtype_str=cache_dtype_str,
+        )
+    else:
+        # Backend doesn't support cache_dtype_str, use basic signature
+        return attn_backend.get_kv_cache_shape(
+            num_blocks,
+            block_size,
+            num_kv_heads,
+            head_size,
+        )
+
 AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
 # list when ubatching is enabled
 PerLayerAttnMetadata: TypeAlias = list[AttnMetadataDict] | AttnMetadataDict
@@ -615,9 +654,11 @@ class ModelRunnerFL(
         # Cached outputs.
         self._draft_token_ids: list[list[int]] | torch.Tensor | None = None
         self.transfer_event = torch.Event()
+        # TODO(yxa): NPU uses int32, CUDA uses int64 for sampled token ids
+        sampled_ids_dtype = torch.int32 if current_platform.device_type == "npu" else torch.int64
         self.sampled_token_ids_pinned_cpu = torch.empty(
             (self.max_num_reqs, 1),
-            dtype=torch.int64,
+            dtype=sampled_ids_dtype,
             device="cpu",
             pin_memory=self.pin_memory,
         )
@@ -3672,16 +3713,28 @@ class ModelRunnerFL(
                     self.model.set_aux_hidden_state_layers(aux_layers)
                 time_after_load = time.perf_counter()
             self.model_memory_usage = m.consumed_memory
-        except current_platform.torch_device_fn.OutOfMemoryError as e:
-            msg = (
-                "Failed to load model - not enough GPU memory. "
-                "Try lowering --gpu-memory-utilization to free memory for weights, "
-                "increasing --tensor-parallel-size, or using --quantization. "
-                "See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ "
-                "for more tips."
-            )
-            combined_msg = f"{msg} (original error: {e})"
-            logger.error(combined_msg)
+        # TODO(yxa): AttributeError: module 'torch_npu.npu' has no attribute 'OutOfMemoryError'
+        except Exception as e:
+            # Check if this is an OutOfMemoryError
+            # For CUDA: torch.cuda.OutOfMemoryError
+            # For NPU: torch_npu doesn't have OutOfMemoryError, but OOM raises RuntimeError
+            is_oom = False
+            if hasattr(current_platform.torch_device_fn, 'OutOfMemoryError'):
+                is_oom = isinstance(e, current_platform.torch_device_fn.OutOfMemoryError)
+            else:
+                # For NPU or other backends without OutOfMemoryError, check error message
+                is_oom = isinstance(e, RuntimeError) and 'out of memory' in str(e).lower()
+
+            if is_oom:
+                msg = (
+                    "Failed to load model - not enough device memory. "
+                    "Try lowering --gpu-memory-utilization to free memory for weights, "
+                    "increasing --tensor-parallel-size, or using --quantization. "
+                    "See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ "
+                    "for more tips."
+                )
+                combined_msg = f"{msg} (original error: {e})"
+                logger.error(combined_msg)
             raise e
         logger.info_once(
             "Model loading took %.4f GiB memory and %.6f seconds",
@@ -4791,6 +4844,37 @@ class ModelRunnerFL(
         # because some of them change the threshold at init time.
         self.calculate_reorder_batch_threshold()
 
+    def _get_graph_support(
+        self,
+        builder_cls: type,
+        vllm_config: VllmConfig,
+        kv_cache_spec: Any,
+    ) -> AttentionCGSupport:
+        """
+        Get graph support (CUDA Graph or ACL Graph) from builder class.
+
+        Different backends use different approaches:
+        - NVIDIA/CUDA: get_cudagraph_support() method
+        - Ascend: aclgraph_support class variable
+
+        This helper abstracts the difference for multi-backend support.
+        """
+        # Try CUDA Graph support (NVIDIA/CUDA backends)
+        if hasattr(builder_cls, 'get_cudagraph_support'):
+            return builder_cls.get_cudagraph_support(vllm_config, kv_cache_spec)
+
+        # Try ACL Graph support (Ascend backend)
+        if hasattr(builder_cls, 'aclgraph_support'):
+            return builder_cls.aclgraph_support
+
+        # Default: no graph support
+        logger.warning(
+            f"Builder class {builder_cls.__name__} has no graph support "
+            "(neither get_cudagraph_support method nor aclgraph_support attribute). "
+            "Defaulting to AttentionCGSupport.NEVER."
+        )
+        return AttentionCGSupport.NEVER
+
     def _check_and_update_cudagraph_mode(
         self,
         attention_backends: list[set[type[AttentionBackend]]],
@@ -4811,8 +4895,8 @@ class ModelRunnerFL(
             for attn_backend in attn_backend_set:
                 builder_cls = attn_backend.get_builder_cls()
 
-                cg_support = builder_cls.get_cudagraph_support(
-                    self.vllm_config, kv_cache_group.kv_cache_spec
+                cg_support = self._get_graph_support(
+                    builder_cls, self.vllm_config, kv_cache_group.kv_cache_spec
                 )
                 if cg_support.value < min_cg_support.value:
                     min_cg_support = cg_support
@@ -5204,12 +5288,13 @@ class ModelRunnerFL(
                     )
                     kernel_num_blocks = num_blocks * num_blocks_per_kv_block
 
-                    kv_cache_shape = attn_backend.get_kv_cache_shape(
+                    kv_cache_shape = _get_kv_cache_shape_compat(
+                        attn_backend,
                         kernel_num_blocks,
                         kernel_block_size,
                         kv_cache_spec.num_kv_heads,
                         kv_cache_spec.head_size,
-                        cache_dtype_str=self.cache_config.cache_dtype,
+                        self.cache_config.cache_dtype,
                     )
                     dtype = kv_cache_spec.dtype
                     try:
