@@ -127,5 +127,5 @@ class FlagGemsBackend(Backend):
             Fully qualified class path string
         """
         if use_mla:
-            return "vllm_fl.attention.mla.MLAFLBackend"
-        return "vllm_fl.attention.attention.AttentionFLBackend"
+            return "vllm_fl.dispatch.backends.flaggems.impl.mla.MLAFLBackend"
+        return "vllm_fl.dispatch.backends.flaggems.impl.attention.AttentionFLBackend"

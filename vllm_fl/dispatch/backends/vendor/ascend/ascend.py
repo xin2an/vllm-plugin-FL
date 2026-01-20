@@ -143,5 +143,5 @@ class AscendBackend(Backend):
             Fully qualified class path string
         """
         if use_mla:
-            return "vllm_fl.attention.backends.ascend.AscendMLABackend"
-        return "vllm_fl.attention.backends.ascend.AscendAttentionBackend"
+            return "vllm_fl.dispatch.backends.vendor.ascend.impl.attention.AscendMLABackend"
+        return "vllm_fl.dispatch.backends.vendor.ascend.impl.attention.AscendAttentionBackend"

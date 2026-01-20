@@ -40,7 +40,7 @@ from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backends.utils import AttentionCGSupport
 
-from vllm_fl.attention.backends.ascend.attention_mask import (
+from vllm_fl.dispatch.backends.vendor.ascend.impl.attention_mask import (
     AttentionMaskBuilder,
     get_attention_mask_builder,
 )

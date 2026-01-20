@@ -41,10 +41,9 @@ def _get_backend(
     """Get backend priorities with lazy import to avoid circular dependency."""
     if use_mla:
         raise NotImplementedError("NOT support mla now!")
-        # return "vllm_fl.attention.backends.mla.MLAFLBackend"
     else:
         if "USE_FLAGGEMS" in os.environ and os.environ["USE_FLAGGEMS"] == "1":
-            return [AttentionBackendEnum.TRITON_ATTN] #"vllm_fl.attention.attention.AttentionFLBackend"
+            return [AttentionBackendEnum.TRITON_ATTN]
         return [AttentionBackendEnum.FLASH_ATTN] 
         
 
@@ -194,9 +193,9 @@ class PlatformFL(Platform):
 
             if cls.device_type == "npu":
                 if use_mla:
-                    backend_path = "vllm_fl.attention.mla.MLAFLBackend"
+                    backend_path = "vllm_fl.dispatch.backends.flaggems.impl.mla.MLAFLBackend"
                 else:
-                    backend_path = "vllm_fl.attention.attention.AttentionFLBackend"
+                    backend_path = "vllm_fl.dispatch.backends.flaggems.impl.attention.AttentionFLBackend"
             else:
                 # For CUDA and other devices, use vLLM native backend
                 from vllm.attention.backends.registry import AttentionBackendEnum

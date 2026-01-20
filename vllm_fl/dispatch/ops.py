@@ -141,7 +141,7 @@ class VLLMFLBackendBase(ABC):
 
         Returns:
             Fully qualified class path string, e.g.:
-            - "vllm_fl.attention.backends.ascend.AscendAttentionBackend"
-            - "vllm_fl.attention.attention.AttentionFLBackend"
+            - "vllm_fl.dispatch.backends.vendor.ascend.impl.attention.AscendAttentionBackend"
+            - "vllm_fl.dispatch.backends.flaggems.impl.attention.AttentionFLBackend"
         """
         pass
