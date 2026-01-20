@@ -60,9 +60,11 @@ try:
         torch.cuda.Event = torch.npu.Event
         torch.cuda.Stream = torch.npu.Stream
         logger.info("NPU compatibility enabled: torch.Event -> torch.npu.Event")
-except ImportError:
-    torch_npu = None
-    logger.warning("torch_npu not available, Ascend attention backend will not work")
+except ImportError as e:
+    raise ImportError(
+        "torch_npu is required for Ascend attention backend. "
+        "Please install torch_npu for NPU support."
+    ) from e
 
 
 def is_torch_npu_available() -> bool:
