@@ -31,32 +31,13 @@ def rmsnorm_cuda(
     Returns:
         Normalized tensor, or tuple of (normalized, residual) if residual is provided
     """
-    try:
-        from vllm._custom_ops import rms_norm as vllm_rms_norm
-        from vllm._custom_ops import fused_add_rms_norm as vllm_fused_add_rms_norm
+    from vllm._custom_ops import rms_norm as vllm_rms_norm
+    from vllm._custom_ops import fused_add_rms_norm as vllm_fused_add_rms_norm
 
-        if residual is not None:
-            vllm_fused_add_rms_norm(x, residual, weight, epsilon)
-            return x, residual
-        else:
-            out = torch.empty_like(x)
-            vllm_rms_norm(out, x, weight, epsilon)
-            return out
-
-    except ImportError:
-        # Fallback to standard PyTorch
-        orig_dtype = x.dtype
-        x = x.float()
-
-        if residual is not None:
-            residual = residual.float()
-            x = x + residual
-
-        variance = x.pow(2).mean(dim=-1, keepdim=True)
-        x = x * torch.rsqrt(variance + epsilon)
-        x = x * weight
-        x = x.to(orig_dtype)
-
-        if residual is not None:
-            return x, residual.to(orig_dtype)
-        return x
+    if residual is not None:
+        vllm_fused_add_rms_norm(x, residual, weight, epsilon)
+        return x, residual
+    else:
+        out = torch.empty_like(x)
+        vllm_rms_norm(out, x, weight, epsilon)
+        return out

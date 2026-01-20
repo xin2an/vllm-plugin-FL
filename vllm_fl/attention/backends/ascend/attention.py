@@ -1,4 +1,8 @@
 # Copyright (c) 2026 BAAI. All rights reserved.
+# Adapted from https://github.com/vllm-project/vllm-ascend/blob/v0.13.0rc1/vllm_ascend/attention/attention_v1.py
+# Below is the original copyright:
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright (c) 2025 Huawei Technologies Co., Ltd.
 
 """
 Ascend NPU native attention backend for vllm-plugin-FL.
@@ -114,6 +118,11 @@ class AscendAttentionMetadataBuilder:
     # ACL graph support - ALWAYS means full graph capture is supported
     aclgraph_support: ClassVar[AttentionCGSupport] = AttentionCGSupport.ALWAYS
     reorder_batch_threshold: ClassVar[int] = 1
+
+    @staticmethod
+    def get_cudagraph_support(vllm_config, kv_cache_spec) -> AttentionCGSupport:
+        """Get CUDAGraph support level for Ascend backend."""
+        return AttentionCGSupport.ALWAYS
 
     # Class-level mask builder cache
     _mask_builder: ClassVar[Optional[AttentionMaskBuilder]] = None
@@ -343,6 +352,7 @@ class AscendAttentionBackend(AttentionBackend):
         block_size: int,
         num_kv_heads: int,
         head_size: int,
+        cache_dtype_str: str = "auto",
     ) -> Tuple[int, ...]:
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 

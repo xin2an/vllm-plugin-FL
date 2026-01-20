@@ -29,23 +29,11 @@ def rmsnorm_ascend(
     Returns:
         Normalized tensor, or tuple of (normalized, residual) if residual is provided
     """
-    orig_dtype = x.dtype
-    x = x.float()
+    import torch_npu
 
     if residual is not None:
-        residual = residual.float()
-        x = x + residual
+        x, _, residual = torch_npu.npu_add_rms_norm(x, residual, weight, epsilon)
+        return x, residual
 
-    # Compute RMS normalization
-    # RMSNorm(x) = x / sqrt(mean(x^2) + eps) * weight
-    variance = x.pow(2).mean(dim=-1, keepdim=True)
-    x = x * torch.rsqrt(variance + epsilon)
-
-    # Apply weight
-    x = x * weight
-
-    x = x.to(orig_dtype)
-
-    if residual is not None:
-        return x, residual.to(orig_dtype)
+    x, _ = torch_npu.npu_rms_norm(x, weight, epsilon)
     return x

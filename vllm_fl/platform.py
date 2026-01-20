@@ -170,35 +170,12 @@ class PlatformFL(Platform):
         selected_backend: "AttentionBackendEnum",
         attn_selector_config: "AttentionSelectorConfig",
     ) -> list[str]:
-        """
-        Get the attention backend class path using the dispatch mechanism.
-
-        The dispatch mechanism automatically selects the appropriate backend
-        based on:
-        1. Hardware availability (NPU, CUDA, etc.)
-        2. User configuration via environment variables:
-           - VLLM_FL_PREFER: "vendor" | "reference" | "flaggems"
-           - VLLM_FL_ALLOW_VENDORS: Comma-separated list of allowed vendors
-           - VLLM_FL_DENY_VENDORS: Comma-separated list of denied vendors
-
-        Backend selection order (default):
-        - flaggems: FlagGems attention (may have issues)
-        - vendor: Platform-specific implementation (e.g., Ascend NPU)
-        - reference: vLLM native attention (PyTorch-based)
-
-        For NPU users, recommend setting VLLM_FL_PREFER=vendor to use
-        Ascend-optimized attention backend.
-        """
+        """Get the attention backend class path using the dispatch mechanism."""
         from vllm_fl.dispatch import call_op
 
         use_mla = attn_selector_config.use_mla
 
         try:
-            # Use dispatch mechanism to select the appropriate attention backend
-            # The dispatch system will automatically choose based on:
-            # 1. Backend availability (is_available check)
-            # 2. Policy configuration (VLLM_FL_PREFER, etc.)
-            # 3. Priority ordering (vendor > reference when vendor is preferred)
             backend_path = call_op("attention_backend", use_mla=use_mla)
 
             logger.info_once(

@@ -21,17 +21,9 @@ def silu_and_mul_cuda(x: torch.Tensor) -> torch.Tensor:
     Returns:
         Output tensor of shape [..., d]
     """
+    from vllm._custom_ops import silu_and_mul as vllm_silu_and_mul
+
     d = x.shape[-1] // 2
     out = torch.empty(*x.shape[:-1], d, dtype=x.dtype, device=x.device)
-
-    try:
-        from vllm._custom_ops import silu_and_mul as vllm_silu_and_mul
-        vllm_silu_and_mul(out, x)
-    except ImportError:
-        # Fallback to standard PyTorch
-        x1 = x[..., :d]
-        x2 = x[..., d:]
-        silu_out = torch.nn.functional.silu(x1)
-        out = silu_out * x2
-
+    vllm_silu_and_mul(out, x)
     return out

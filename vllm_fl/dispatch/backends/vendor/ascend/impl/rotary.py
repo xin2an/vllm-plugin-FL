@@ -33,17 +33,8 @@ def rotary_embedding_ascend(
     Returns:
         Tuple of (embedded_query, embedded_key)
     """
-    try:
-        import torch_npu
+    import torch_npu
 
-        # Use Ascend-optimized rotary embedding if available
-        # For now, use standard PyTorch implementation
-        # TODO: Replace with torch_npu.npu_rotary_mul when available
-        pass
-    except ImportError:
-        pass
-
-    # Standard implementation (can be optimized with Ascend kernels)
     # Get cos/sin for the positions
     if position_ids.dim() == 1:
         cos_selected = cos[position_ids]
@@ -52,40 +43,34 @@ def rotary_embedding_ascend(
         cos_selected = cos[position_ids]
         sin_selected = sin[position_ids]
 
-    # Expand dimensions to match query/key shape
-    if query.dim() == 4:
-        cos_selected = cos_selected.unsqueeze(1)
-        sin_selected = sin_selected.unsqueeze(1)
-    elif query.dim() == 3:
-        cos_selected = cos_selected.unsqueeze(1)
-        sin_selected = sin_selected.unsqueeze(1)
-
-    # Check if we need to repeat cos/sin to match head_dim
-    rotary_dim = cos_selected.shape[-1]
+    # Prepare cos/sin shape for npu_rotary_mul: [1, seq_len, 1, head_dim]
     head_dim = query.shape[-1]
+    rotary_dim = cos_selected.shape[-1]
 
+    # Duplicate cos/sin if needed to match head_dim
     if rotary_dim != head_dim:
         cos_selected = torch.cat([cos_selected, cos_selected], dim=-1)
         sin_selected = torch.cat([sin_selected, sin_selected], dim=-1)
 
-    def rotate_half(x):
-        """Rotates half the hidden dims of the input."""
-        x1 = x[..., : x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2 :]
-        return torch.cat((-x2, x1), dim=-1)
+    # Reshape cos/sin to [1, seq_len, 1, head_dim]
+    cos_selected = cos_selected.reshape(1, -1, 1, head_dim)
+    sin_selected = sin_selected.reshape(1, -1, 1, head_dim)
 
-    if rotary_interleaved:
-        # Interleaved rotary
-        def rotate_interleaved(x):
-            x1 = x[..., ::2]
-            x2 = x[..., 1::2]
-            return torch.stack((-x2, x1), dim=-1).flatten(-2)
+    # Reshape query/key to [1, seq_len, num_heads, head_dim]
+    query_shape = query.shape
+    key_shape = key.shape
 
-        q_embed = (query * cos_selected) + (rotate_interleaved(query) * sin_selected)
-        k_embed = (key * cos_selected) + (rotate_interleaved(key) * sin_selected)
-    else:
-        # Standard rotary (neox style)
-        q_embed = (query * cos_selected) + (rotate_half(query) * sin_selected)
-        k_embed = (key * cos_selected) + (rotate_half(key) * sin_selected)
+    if query.dim() == 3:
+        query = query.unsqueeze(0)
+    if key.dim() == 3:
+        key = key.unsqueeze(0)
+
+    # Apply rotary embedding using NPU kernel
+    q_embed = torch_npu.npu_rotary_mul(query, cos_selected, sin_selected)
+    k_embed = torch_npu.npu_rotary_mul(key, cos_selected, sin_selected)
+
+    # Restore original shape
+    q_embed = q_embed.view(query_shape)
+    k_embed = k_embed.view(key_shape)
 
     return q_embed, k_embed
