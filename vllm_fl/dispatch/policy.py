@@ -393,13 +393,8 @@ class PolicyManager:
         allow_str = os.environ.get("VLLM_FL_ALLOW_VENDORS", "").strip()
         allow_vendors = self._parse_csv_set(allow_str) if allow_str else None
 
-        # TODO(xinan): remove this
-        per_op_order = {"attention_backend": ["vendor", "reference", "flaggems"]}
-
         per_op_str = os.environ.get("VLLM_FL_PER_OP", "").strip()
-        env_per_op = self._parse_per_op(per_op_str) if per_op_str else None
-        if env_per_op:
-            per_op_order.update(env_per_op)
+        per_op_order = self._parse_per_op(per_op_str) if per_op_str else None
 
         return SelectionPolicy.from_dict(
             prefer=prefer_str,

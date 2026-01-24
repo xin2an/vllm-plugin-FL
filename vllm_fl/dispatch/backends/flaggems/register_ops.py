@@ -65,14 +65,15 @@ def register_builtins(registry) -> None:
             priority=BackendPriority.DEFAULT,
         ),
         # Attention Backend
-        OpImpl(
-            op_name="attention_backend",
-            impl_id="default.flaggems",
-            kind=BackendImplKind.DEFAULT,
-            fn=_bind_is_available(backend.attention_backend, is_avail),
-            vendor=None,
-            priority=BackendPriority.DEFAULT,
-        ),
+        # TODO: attention_backend 暂时禁用，待调试成功后重新启用
+        # OpImpl(
+        #     op_name="attention_backend",
+        #     impl_id="default.flaggems",
+        #     kind=BackendImplKind.DEFAULT,
+        #     fn=_bind_is_available(backend.attention_backend, is_avail),
+        #     vendor=None,
+        #     priority=BackendPriority.DEFAULT,
+        # ),
     ]
 
     registry.register_many(impls)
