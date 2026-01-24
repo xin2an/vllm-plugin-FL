@@ -7,16 +7,15 @@ Selection policy management for operator dispatch.
 from __future__ import annotations
 
 import contextvars
+import logging
 import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
-try:
-    import yaml
-    YAML_AVAILABLE = True
-except ImportError:
-    YAML_AVAILABLE = False
+import yaml
+
+logger = logging.getLogger(__name__)
 
 
 # Valid preference values for VLLM_FL_PREFER
@@ -245,7 +244,7 @@ class PolicyManager:
 
         return result
 
-    def _policy_from_config(self, config_path: str) -> Optional[SelectionPolicy]:
+    def _policy_from_config(self, config_path: str) -> SelectionPolicy:
         """
         Create a SelectionPolicy from a YAML configuration file.
 
@@ -253,8 +252,11 @@ class PolicyManager:
             config_path: Path to the YAML configuration file.
 
         Returns:
-            SelectionPolicy if successfully loaded, None if file doesn't exist
-            or YAML is not available.
+            SelectionPolicy loaded from the config file.
+
+        Raises:
+            FileNotFoundError: If the config file does not exist.
+            ValueError: If the config file cannot be parsed.
 
         Config file format (YAML):
             # Preferred backend type: flaggems, vendor, or reference
@@ -283,7 +285,7 @@ class PolicyManager:
             #   - vendor        : Any available vendor backend (auto-detect)
             #   - vendor:cuda   : Only CUDA vendor backend
             #   - vendor:ascend : Only Ascend vendor backend
-            per_op:
+            op_backends:
               rmsnorm:
                 - vendor        # Try any available vendor first
                 - flaggems      # Then try flaggems
@@ -294,31 +296,14 @@ class PolicyManager:
                 - flaggems
                 - reference
         """
-        if not YAML_AVAILABLE:
-            import warnings
-            warnings.warn(
-                f"VLLM_FL_CONFIG is set to '{config_path}' but PyYAML is not installed. "
-                "Install it with: pip install pyyaml. Falling back to environment variables."
-            )
-            return None
-
         if not os.path.isfile(config_path):
-            import warnings
-            warnings.warn(
-                f"Config file '{config_path}' not found. Falling back to environment variables."
-            )
-            return None
+            raise FileNotFoundError(f"Config file '{config_path}' not found.")
 
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 config: Dict[str, Any] = yaml.safe_load(f) or {}
         except Exception as e:
-            import warnings
-            warnings.warn(
-                f"Failed to load config file '{config_path}': {e}. "
-                "Falling back to environment variables."
-            )
-            return None
+            raise ValueError(f"Failed to load config file '{config_path}': {e}") from e
 
         # Parse prefer
         prefer_str = str(config.get("prefer", PREFER_DEFAULT)).strip().lower()
@@ -347,8 +332,8 @@ class PolicyManager:
             elif isinstance(allow_vendors_raw, str):
                 allow_vendors = self._parse_csv_set(allow_vendors_raw)
 
-        # Parse per_op
-        per_op_raw = config.get("per_op")
+        # Parse op_backends
+        per_op_raw = config.get("op_backends")
         per_op_order: Optional[Dict[str, List[str]]] = None
         if per_op_raw and isinstance(per_op_raw, dict):
             per_op_order = {}
@@ -360,6 +345,8 @@ class PolicyManager:
                     per_op_order[str(op_name)] = [
                         o.strip() for o in order.split("|") if o.strip()
                     ]
+
+        logger.info("Using custom config from '%s'", config_path)
 
         return SelectionPolicy.from_dict(
             prefer=prefer_str,
@@ -389,9 +376,7 @@ class PolicyManager:
         # Priority 1: Check for config file
         config_path = os.environ.get("VLLM_FL_CONFIG", "").strip()
         if config_path:
-            policy = self._policy_from_config(config_path)
-            if policy is not None:
-                return policy
+            return self._policy_from_config(config_path)
 
         # Priority 2: Environment variables
         prefer_str = os.environ.get("VLLM_FL_PREFER", "").strip().lower()
@@ -477,7 +462,7 @@ def policy_from_env() -> SelectionPolicy:
     return PolicyManager.get_instance()._policy_from_env()
 
 
-def policy_from_config(config_path: str) -> Optional[SelectionPolicy]:
+def policy_from_config(config_path: str) -> SelectionPolicy:
     """
     Create a SelectionPolicy from a YAML configuration file.
 
@@ -485,8 +470,11 @@ def policy_from_config(config_path: str) -> Optional[SelectionPolicy]:
         config_path: Path to the YAML configuration file.
 
     Returns:
-        SelectionPolicy if successfully loaded, None if file doesn't exist
-        or YAML is not available.
+        SelectionPolicy loaded from the config file.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        ValueError: If the config file cannot be parsed.
 
     Example config file (YAML):
         # Preferred backend type: flaggems, vendor, or reference
@@ -513,7 +501,7 @@ def policy_from_config(config_path: str) -> Optional[SelectionPolicy]:
         #   - vendor        : Any available vendor backend (auto-detect)
         #   - vendor:cuda   : Only CUDA vendor backend
         #   - vendor:ascend : Only Ascend vendor backend
-        per_op:
+        op_backends:
           rmsnorm:
             - vendor        # Try any available vendor first
             - flaggems      # Then try flaggems

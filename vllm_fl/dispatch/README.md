@@ -237,7 +237,7 @@ deny_vendors:
 #   - vendor        : Any available vendor backend (auto-detect)
 #   - vendor:cuda   : Only CUDA vendor backend
 #   - vendor:ascend : Only Ascend vendor backend
-per_op:
+op_backends:
   rmsnorm:
     - vendor        # Try any available vendor first
     - flaggems      # Then try flaggems
