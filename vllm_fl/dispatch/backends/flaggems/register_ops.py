@@ -65,7 +65,6 @@ def register_builtins(registry) -> None:
             priority=BackendPriority.DEFAULT,
         ),
         # Attention Backend
-        # TODO: attention_backend 暂时禁用，待调试成功后重新启用
         # OpImpl(
         #     op_name="attention_backend",
         #     impl_id="default.flaggems",
