@@ -117,9 +117,5 @@ class CudaBackend(Backend):
         if use_mla:
             return AttentionBackendEnum.MLA.get_path()
 
-        # Check for TRITON_ATTN preference via environment variable
-        if os.environ.get("USE_FLAGGEMS", "0") == "1":
-            return AttentionBackendEnum.TRITON_ATTN.get_path()
-
         # Default to FLASH_ATTN
         return AttentionBackendEnum.FLASH_ATTN.get_path()
