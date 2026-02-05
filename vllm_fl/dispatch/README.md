@@ -280,7 +280,7 @@ op_backends:
 
 # FlagGems operator blacklist (optional)
 # These operators will NOT use FlagGems implementation
-flaggems_blacklist:
+flagos_blacklist:
   - to_copy
   - zeros
   - mm
@@ -334,7 +334,7 @@ Environment variables can override specific items from platform config. If not s
 | `VLLM_FL_FLAGOS_WHITELIST` | (none) | FlagGems ops whitelist (mutually exclusive with blacklist) |
 | `VLLM_FL_FLAGOS_BLACKLIST` | (none) | FlagGems ops blacklist (mutually exclusive with whitelist) |
 
-**Priority**: `WHITELIST` > `BLACKLIST` (env) > `flaggems_blacklist` (config file)
+**Priority**: `WHITELIST` > `BLACKLIST` (env) > `flagos_blacklist` (config file)
 
 #### OOT Operator Control
 
@@ -455,14 +455,14 @@ WHITELIST (env) ──▶ Completely overrides blacklist
 ```bash
 # Platform config (ascend.yaml) has:
 #   prefer: flagos
-#   flaggems_blacklist: [to_copy, zeros, mm, ...]
+#   flagos_blacklist: [to_copy, zeros, mm, ...]
 
 # User overrides only prefer, blacklist still from config
 export VLLM_FL_PREFER=vendor
 
 # Result:
 #   prefer: vendor (from env)
-#   flaggems_blacklist: [to_copy, zeros, mm, ...] (from config)
+#   flagos_blacklist: [to_copy, zeros, mm, ...] (from config)
 ```
 
 ```bash
@@ -472,7 +472,7 @@ export VLLM_FL_FLAGOS_BLACKLIST="custom_op1,custom_op2"
 
 # Result:
 #   prefer: vendor (from env)
-#   flaggems_blacklist: [custom_op1, custom_op2] (from env, config ignored)
+#   flagos_blacklist: [custom_op1, custom_op2] (from env, config ignored)
 ```
 
 #### Important Notes

@@ -50,8 +50,8 @@ op_backends:
     - vendor
     - reference
 
-# FlagGems operator blacklist
-# flaggems_blacklist: []
+# FlagOS operator blacklist
+# flagos_blacklist: []
 
 # OOT (Out-of-Tree) operator blacklist
 # oot_blacklist: []
