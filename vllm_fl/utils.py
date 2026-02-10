@@ -170,7 +170,7 @@ class DeviceInfo:
         return backend.get_torch_backend_device_fn()
 
     def get_supported_device(self):
-        if self.vendor_name in self.supported_device:
+        if self.vendor_name not in self.supported_device:
             raise NotImplementedError(f"{self.vendor_name} is not support now!")
         return True
 
