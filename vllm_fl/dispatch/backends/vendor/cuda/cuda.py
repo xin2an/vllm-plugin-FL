@@ -147,7 +147,7 @@ class CudaBackend(Backend):
             inplace=inplace,
         )
 
-    def attention_backend(self, instance, use_mla: bool = False) -> str:
+    def attention_backend(self, use_mla: bool = False) -> str:
         """
         Get the attention backend class path for CUDA.
 
@@ -156,7 +156,6 @@ class CudaBackend(Backend):
         - TRITON_ATTN (when use_flaggems_op("triton_attn") is True)
 
         Args:
-            instance: The calling instance (for interface consistency)
             use_mla: Whether to use Multi-head Latent Attention (MLA)
 
         Returns:

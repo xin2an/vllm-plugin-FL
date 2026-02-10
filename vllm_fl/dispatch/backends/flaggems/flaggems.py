@@ -118,12 +118,11 @@ class FlagGemsBackend(Backend):
             inplace=inplace,
         )
 
-    def attention_backend(self, instance, use_mla: bool = False) -> str:
+    def attention_backend(self, use_mla: bool = False) -> str:
         """
         Get the attention backend class path for FlagGems.
 
         Args:
-            instance: The calling instance (for interface consistency)
             use_mla: Whether to use Multi-head Latent Attention (MLA)
 
         Returns:
