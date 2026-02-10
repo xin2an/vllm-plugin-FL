@@ -12,23 +12,25 @@ import torch
 
 
 def rms_norm_torch(
+    instance,
     x: torch.Tensor,
-    residual: Optional[torch.Tensor],
-    weight: torch.Tensor,
-    epsilon: float,
+    residual: Optional[torch.Tensor] = None,
 ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
     """
     RMS normalization using PyTorch.
 
     Args:
+        instance: The calling instance (e.g., RMSNorm layer)
         x: Input tensor
         residual: Optional residual tensor
-        weight: Normalization weight
-        epsilon: Small constant for numerical stability
 
     Returns:
         Normalized tensor, or tuple of (normalized, residual) if residual is provided
     """
+    # Get weight and epsilon from instance
+    weight = instance.weight
+    epsilon = instance.variance_epsilon
+
     if residual is not None:
         x = x + residual
         residual = x

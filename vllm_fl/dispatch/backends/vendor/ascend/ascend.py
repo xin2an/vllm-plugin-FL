@@ -51,11 +51,12 @@ class AscendBackend(Backend):
 
     # ==================== Operator Implementations ====================
 
-    def silu_and_mul(self, x: torch.Tensor) -> torch.Tensor:
+    def silu_and_mul(self, instance, x: torch.Tensor) -> torch.Tensor:
         """
         SiLU activation followed by element-wise multiplication.
 
         Args:
+            instance: The calling instance (for interface consistency)
             x: Input tensor of shape [..., 2*d]
 
         Returns:
@@ -63,33 +64,32 @@ class AscendBackend(Backend):
         """
         from .impl.activation import silu_and_mul_ascend
 
-        return silu_and_mul_ascend(x)
+        return silu_and_mul_ascend(instance, x)
 
     def rms_norm(
         self,
+        instance,
         x: torch.Tensor,
-        residual: Optional[torch.Tensor],
-        weight: torch.Tensor,
-        epsilon: float,
+        residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         """
         RMS normalization.
 
         Args:
+            instance: The calling instance (e.g., RMSNorm layer)
             x: Input tensor
             residual: Optional residual tensor
-            weight: Normalization weight
-            epsilon: Small constant for numerical stability
 
         Returns:
             Normalized tensor, or tuple of (normalized, residual) if residual is provided
         """
         from .impl.normalization import rms_norm_ascend
 
-        return rms_norm_ascend(x, residual, weight, epsilon)
+        return rms_norm_ascend(instance, x, residual)
 
     def rotary_embedding(
         self,
+        instance,
         query: torch.Tensor,
         key: torch.Tensor,
         cos: torch.Tensor,
@@ -102,6 +102,7 @@ class AscendBackend(Backend):
         Apply rotary position embedding.
 
         Args:
+            instance: The calling instance (for interface consistency)
             query: Query tensor
             key: Key tensor
             cos: Cosine cache
@@ -116,6 +117,7 @@ class AscendBackend(Backend):
         from .impl.rotary import rotary_embedding_ascend
 
         return rotary_embedding_ascend(
+            instance,
             query,
             key,
             cos,
@@ -125,7 +127,7 @@ class AscendBackend(Backend):
             inplace=inplace,
         )
 
-    def attention_backend(self, use_mla: bool = False) -> str:
+    def attention_backend(self, instance, use_mla: bool = False) -> str:
         """
         Get the attention backend class path for Ascend NPU.
 
@@ -137,6 +139,7 @@ class AscendBackend(Backend):
         torch_npu operators without depending on vllm-ascend package.
 
         Args:
+            instance: The calling instance (for interface consistency)
             use_mla: Whether to use Multi-head Latent Attention (MLA)
 
         Returns:
