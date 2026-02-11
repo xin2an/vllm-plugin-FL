@@ -10,7 +10,7 @@ import torch
 
 
 def rotary_embedding_metax(
-    instance,
+    obj,
     query: torch.Tensor,
     key: torch.Tensor,
     cos: torch.Tensor,

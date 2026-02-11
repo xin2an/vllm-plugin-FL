@@ -10,7 +10,7 @@ import torch
 
 
 def rotary_embedding_flaggems(
-    instance,
+    obj,
     query: torch.Tensor,
     key: torch.Tensor,
     cos: torch.Tensor,
@@ -23,7 +23,7 @@ def rotary_embedding_flaggems(
     Apply rotary position embedding using FlagGems.
 
     Args:
-        instance: The calling instance (for interface consistency)
+        obj: The calling obj (for interface consistency)
         query: Query tensor
         key: Key tensor
         cos: Cosine cache

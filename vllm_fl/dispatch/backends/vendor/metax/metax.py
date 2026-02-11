@@ -59,12 +59,12 @@ class MetaxBackend(Backend):
 
     # ==================== Operator Implementations ====================
 
-    def silu_and_mul(self, instance, x: torch.Tensor) -> torch.Tensor:
+    def silu_and_mul(self, obj, x: torch.Tensor) -> torch.Tensor:
         """
         SiLU activation followed by element-wise multiplication.
 
         Args:
-            instance: The calling instance (for interface consistency)
+            obj: The calling obj (for interface consistency)
             x: Input tensor of shape [..., 2*d]
 
         Returns:
@@ -72,11 +72,11 @@ class MetaxBackend(Backend):
         """
         from .impl.activation import silu_and_mul_metax
 
-        return silu_and_mul_metax(instance, x)
+        return silu_and_mul_metax(obj, x)
 
     def rms_norm(
         self,
-        instance,
+        obj,
         x: torch.Tensor,
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
@@ -84,7 +84,7 @@ class MetaxBackend(Backend):
         RMS normalization.
 
         Args:
-            instance: The calling instance (e.g., RMSNorm layer)
+            obj: The calling obj (e.g., RMSNorm layer)
             x: Input tensor
             residual: Optional residual tensor
 
@@ -93,11 +93,11 @@ class MetaxBackend(Backend):
         """
         from .impl.normalization import rms_norm_metax
 
-        return rms_norm_metax(instance, x, residual)
+        return rms_norm_metax(obj, x, residual)
 
     def rotary_embedding(
         self,
-        instance,
+        obj,
         query: torch.Tensor,
         key: torch.Tensor,
         cos: torch.Tensor,
@@ -110,7 +110,7 @@ class MetaxBackend(Backend):
         Apply rotary position embedding.
 
         Args:
-            instance: The calling instance (for interface consistency)
+            obj: The calling obj (for interface consistency)
             query: Query tensor
             key: Key tensor
             cos: Cosine cache
@@ -125,7 +125,7 @@ class MetaxBackend(Backend):
         from .impl.rotary import rotary_embedding_metax
 
         return rotary_embedding_metax(
-            instance,
+            obj,
             query,
             key,
             cos,

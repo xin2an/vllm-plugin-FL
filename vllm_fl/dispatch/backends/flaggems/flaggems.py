@@ -42,12 +42,12 @@ class FlagGemsBackend(Backend):
 
     # ==================== Operator Implementations ====================
 
-    def silu_and_mul(self, instance, x: torch.Tensor) -> torch.Tensor:
+    def silu_and_mul(self, obj, x: torch.Tensor) -> torch.Tensor:
         """
         SiLU activation followed by element-wise multiplication.
 
         Args:
-            instance: The calling instance (for interface consistency)
+            obj: The calling obj (for interface consistency)
             x: Input tensor of shape [..., 2*d]
 
         Returns:
@@ -55,11 +55,11 @@ class FlagGemsBackend(Backend):
         """
         from .impl.activation import silu_and_mul_flaggems
 
-        return silu_and_mul_flaggems(instance, x)
+        return silu_and_mul_flaggems(obj, x)
 
     def rms_norm(
         self,
-        instance,
+        obj,
         x: torch.Tensor,
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
@@ -67,7 +67,7 @@ class FlagGemsBackend(Backend):
         RMS normalization.
 
         Args:
-            instance: The calling instance (e.g., RMSNorm layer)
+            obj: The calling obj (e.g., RMSNorm layer)
             x: Input tensor
             residual: Optional residual tensor
 
@@ -76,11 +76,11 @@ class FlagGemsBackend(Backend):
         """
         from .impl.normalization import rms_norm_flaggems
 
-        return rms_norm_flaggems(instance, x, residual)
+        return rms_norm_flaggems(obj, x, residual)
 
     def rotary_embedding(
         self,
-        instance,
+        obj,
         query: torch.Tensor,
         key: torch.Tensor,
         cos: torch.Tensor,
@@ -93,7 +93,7 @@ class FlagGemsBackend(Backend):
         Apply rotary position embedding.
 
         Args:
-            instance: The calling instance (for interface consistency)
+            obj: The calling obj (for interface consistency)
             query: Query tensor
             key: Key tensor
             cos: Cosine cache
@@ -108,7 +108,7 @@ class FlagGemsBackend(Backend):
         from .impl.rotary import rotary_embedding_flaggems
 
         return rotary_embedding_flaggems(
-            instance,
+            obj,
             query,
             key,
             cos,

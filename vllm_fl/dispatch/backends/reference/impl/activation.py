@@ -10,12 +10,12 @@ import torch
 import torch.nn.functional as F
 
 
-def silu_and_mul_torch(instance, x: torch.Tensor) -> torch.Tensor:
+def silu_and_mul_torch(obj, x: torch.Tensor) -> torch.Tensor:
     """
     SiLU activation followed by element-wise multiplication using PyTorch.
 
     Args:
-        instance: The calling instance (for interface consistency)
+        obj: The calling obj (for interface consistency)
         x: Input tensor of shape [..., 2*d]
 
     Returns:

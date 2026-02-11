@@ -59,14 +59,14 @@ class CudaBackend(Backend):
 
     # ==================== Operator Implementations ====================
 
-    def silu_and_mul(self, instance, x: torch.Tensor) -> torch.Tensor:
+    def silu_and_mul(self, obj, x: torch.Tensor) -> torch.Tensor:
         """
         SiLU activation followed by element-wise multiplication.
 
         Uses vLLM's native CUDA implementation.
 
         Args:
-            instance: The calling instance (for interface consistency)
+            obj: The calling obj (for interface consistency)
             x: Input tensor of shape [..., 2*d]
 
         Returns:
@@ -74,11 +74,11 @@ class CudaBackend(Backend):
         """
         from .impl.activation import silu_and_mul_cuda
 
-        return silu_and_mul_cuda(instance, x)
+        return silu_and_mul_cuda(obj, x)
 
     def rms_norm(
         self,
-        instance,
+        obj,
         x: torch.Tensor,
         residual: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
@@ -86,7 +86,7 @@ class CudaBackend(Backend):
         RMS normalization using vLLM's CUDA implementation.
 
         Args:
-            instance: The calling instance (e.g., RMSNorm layer)
+            obj: The calling obj (e.g., RMSNorm layer)
             x: Input tensor
             residual: Optional residual tensor
 
@@ -95,11 +95,11 @@ class CudaBackend(Backend):
         """
         from .impl.normalization import rms_norm_cuda
 
-        return rms_norm_cuda(instance, x, residual)
+        return rms_norm_cuda(obj, x, residual)
 
     def rotary_embedding(
         self,
-        instance,
+        obj,
         query: torch.Tensor,
         key: torch.Tensor,
         cos: torch.Tensor,
@@ -112,7 +112,7 @@ class CudaBackend(Backend):
         Apply rotary position embedding using vLLM's CUDA implementation.
 
         Args:
-            instance: The calling instance (for interface consistency)
+            obj: The calling obj (for interface consistency)
             query: Query tensor
             key: Key tensor
             cos: Cosine cache
@@ -127,7 +127,7 @@ class CudaBackend(Backend):
         from .impl.rotary import rotary_embedding_cuda
 
         return rotary_embedding_cuda(
-            instance,
+            obj,
             query,
             key,
             cos,

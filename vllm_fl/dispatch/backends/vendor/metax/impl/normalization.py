@@ -12,7 +12,7 @@ import torch
 
 
 def rms_norm_metax(
-    instance,
+    obj,
     x: torch.Tensor,
     residual: Optional[torch.Tensor] = None,
 ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:

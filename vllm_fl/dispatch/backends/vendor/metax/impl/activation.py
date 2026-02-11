@@ -9,5 +9,5 @@ from __future__ import annotations
 import torch
 
 
-def silu_and_mul_metax(instance, x: torch.Tensor) -> torch.Tensor:
+def silu_and_mul_metax(obj, x: torch.Tensor) -> torch.Tensor:
 

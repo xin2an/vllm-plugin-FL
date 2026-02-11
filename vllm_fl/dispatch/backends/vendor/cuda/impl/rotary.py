@@ -10,7 +10,7 @@ import torch
 
 
 def rotary_embedding_cuda(
-    instance,
+    obj,
     query: torch.Tensor,
     key: torch.Tensor,
     cos: torch.Tensor,
@@ -25,7 +25,7 @@ def rotary_embedding_cuda(
     Uses vLLM's optimized CUDA kernel when available.
 
     Args:
-        instance: The calling instance (for interface consistency)
+        obj: The calling obj (for interface consistency)
         query: Query tensor
         key: Key tensor
         cos: Cosine cache
