@@ -44,10 +44,6 @@ class MetaxBackend(Backend):
         """
         if MetaxBackend._available is None:
             try:
-                if not torch.cuda.is_available() or torch.cuda.device_count() == 0:
-                    MetaxBackend._available = False
-                    return False
-
                 from vllm.platforms import current_platform
                 if hasattr(current_platform, 'vendor_name') and current_platform.vendor_name == "metax":
                     MetaxBackend._available = True
