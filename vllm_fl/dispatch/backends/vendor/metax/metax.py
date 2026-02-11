@@ -44,29 +44,15 @@ class MetaxBackend(Backend):
         """
         if MetaxBackend._available is None:
             try:
-                # Check if CUDA device is available (MACA is CUDA-compatible)
                 if not torch.cuda.is_available() or torch.cuda.device_count() == 0:
                     MetaxBackend._available = False
                     return False
 
-                # Use current_platform's vendor information to check if this is METAX
-                try:
-                    from vllm.platforms import current_platform
-
-                    # Only enable METAX backend for metax vendor
-                    if hasattr(current_platform, 'vendor_name') and current_platform.vendor_name == "metax":
-                        MetaxBackend._available = True
-                    else:
-                        MetaxBackend._available = False
-
-                except Exception:
-                    # Fallback: check device name for MACA/METAX keywords
-                    device_name = torch.cuda.get_device_name(0).upper()
-                    if "MACA" in device_name or "METAX" in device_name or "MOORE" in device_name:
-                        MetaxBackend._available = True
-                    else:
-                        MetaxBackend._available = False
-
+                from vllm.platforms import current_platform
+                if hasattr(current_platform, 'vendor_name') and current_platform.vendor_name == "metax":
+                    MetaxBackend._available = True
+                else:
+                    MetaxBackend._available = False
             except Exception:
                 MetaxBackend._available = False
         return MetaxBackend._available

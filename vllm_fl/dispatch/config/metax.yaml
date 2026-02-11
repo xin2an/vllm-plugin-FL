@@ -28,22 +28,22 @@ strict: false
 op_backends:
   # Prefer vendor implementation for all operators
   silu_and_mul:
-    - vendor:metax
+    - vendor
     - flaggems
     - reference
 
   rms_norm:
-    - vendor:metax
+    - vendor
     - flaggems
     - reference
 
   rotary_embedding:
-    - vendor:metax
+    - vendor
     - flaggems
     - reference
 
   attention_backend:
-    - vendor:metax
+    - vendor
     - flaggems
 
 # FlagOS operator blacklist (Optional)

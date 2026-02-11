@@ -48,29 +48,11 @@ class CudaBackend(Backend):
                     CudaBackend._available = False
                     return False
 
-                # Use current_platform's vendor information to check if this is NVIDIA
-                # This decouples from device name string matching and properly
-                # distinguishes NVIDIA GPUs from CUDA-alike devices
-                try:
-                    from vllm.platforms import current_platform
-
-                    # Only enable CUDA backend for NVIDIA vendor
-                    # CUDA-alike devices (MACA/metax, MUSA/mthreads, etc.)
-                    # have their own vendor names and should use their own backends
-                    if hasattr(current_platform, 'vendor_name') and current_platform.vendor_name == "nvidia":
-                        CudaBackend._available = True
-                    else:
-                        CudaBackend._available = False
-
-                except Exception:
-                    # Fallback: if platform detection fails, check device name
-                    # This ensures backward compatibility
-                    device_name = torch.cuda.get_device_name(0).upper()
-                    if "NVIDIA" in device_name:
-                        CudaBackend._available = True
-                    else:
-                        CudaBackend._available = False
-
+                from vllm.platforms import current_platform
+                if hasattr(current_platform, 'vendor_name') and current_platform.vendor_name == "nvidia":
+                    CudaBackend._available = True
+                else:
+                    CudaBackend._available = False
             except Exception:
                 CudaBackend._available = False
         return CudaBackend._available
