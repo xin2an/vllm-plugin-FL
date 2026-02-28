@@ -85,3 +85,15 @@ def register_model():
         )
     except Exception as e:
         logger.error(f"Register KimiK25 model error: {str(e)}")
+
+    # Register GLM-5 (GlmMoeDsa) model
+    try:
+        from vllm_fl.models.glm_moe_dsa import patch_is_deepseek_mla
+        patch_is_deepseek_mla()
+
+        ModelRegistry.register_model(
+            "GlmMoeDsaForCausalLM",
+            "vllm_fl.models.glm_moe_dsa:GlmMoeDsaForCausalLM"
+        )
+    except Exception as e:
+        logger.error(f"Register GlmMoeDsa model error: {str(e)}")
