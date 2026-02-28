@@ -1,3 +1,4 @@
+vllm==0.13.0
 decorator
 pyyaml
 scipy
@@ -7,3 +8,4 @@ scikit-build-core==0.11
 pybind11
 ninja
 cmake
+fastsafetensors
