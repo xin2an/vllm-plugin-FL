@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 
+
 def load_json(path):
     """Load JSON file"""
     try:
