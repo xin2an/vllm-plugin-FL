@@ -18,7 +18,6 @@ DATASET_METRICS = {
     "mmlu_redux": "exact_match,default",
     "gpqa": "exact_match,flexible-extract",
     "mgsm": "exact_match,flexible-extract",
-
     # Other common tasks
     "hellaswag": "acc,none",
     "truthfulqa_mc2": "acc,none",
@@ -34,6 +33,7 @@ DATASET_METRICS = {
     "cmmlu": "acc,none",
     "minerva_math": "exact_match,none",
 }
+
 
 def get_preferred_metric(task_name, metrics_dict):
     """Get preferred metric value for a task"""
@@ -57,6 +57,7 @@ def get_preferred_metric(task_name, metrics_dict):
 
     return None, None
 
+
 def collect_results(output_dir="output"):
     """Collect all evaluation results"""
     results = {}
@@ -78,12 +79,10 @@ def collect_results(output_dir="output"):
             if task not in results:
                 metric_name, value = get_preferred_metric(task, metrics)
                 if metric_name and value is not None:
-                    results[task] = {
-                        "metric": metric_name,
-                        "value": value
-                    }
+                    results[task] = {"metric": metric_name, "value": value}
 
     return results
+
 
 def print_results(results):
     """Format and print results"""
@@ -112,7 +111,17 @@ def print_results(results):
     print(f"{'Task':<30} {'Score':<10}")
     print("-" * 45)
 
-    main_tasks = ["mmlu_pro", "bbh", "gsm8k", "hendrycks_math", "humaneval", "mbpp", "mmlu_redux", "gpqa", "mgsm"]
+    main_tasks = [
+        "mmlu_pro",
+        "bbh",
+        "gsm8k",
+        "hendrycks_math",
+        "humaneval",
+        "mbpp",
+        "mmlu_redux",
+        "gpqa",
+        "mgsm",
+    ]
 
     for task in main_tasks:
         found = False
@@ -126,16 +135,22 @@ def print_results(results):
         if not found:
             # For gpqa and mgsm, calculate average of subtasks
             if task == "gpqa":
-                gpqa_scores = [data["value"] for t, data in results.items()
-                              if t.startswith("gpqa_") and "cot_zeroshot" in t]
+                gpqa_scores = [
+                    data["value"]
+                    for t, data in results.items()
+                    if t.startswith("gpqa_") and "cot_zeroshot" in t
+                ]
                 if gpqa_scores:
                     avg = sum(gpqa_scores) / len(gpqa_scores)
                     print(f"{'gpqa (avg)':<30} {avg:.4f}")
                     found = True
             elif task == "mgsm":
                 # Average of mgsm_direct subtasks
-                mgsm_direct = [data["value"] for t, data in results.items()
-                               if t.startswith("mgsm_direct_") and "spanish_bench" not in t]
+                mgsm_direct = [
+                    data["value"]
+                    for t, data in results.items()
+                    if t.startswith("mgsm_direct_") and "spanish_bench" not in t
+                ]
                 if mgsm_direct:
                     avg = sum(mgsm_direct) / len(mgsm_direct)
                     print(f"{'mgsm_direct (avg)':<30} {avg:.4f}")
@@ -143,13 +158,18 @@ def print_results(results):
             else:
                 # Try to match results containing task name
                 for result_task, data in results.items():
-                    if (task in result_task.lower() and result_task.count("_") <= task.count("_") + 1
-                            and "cot_fewshot" not in result_task and "direct" not in result_task):
+                    if (
+                        task in result_task.lower()
+                        and result_task.count("_") <= task.count("_") + 1
+                        and "cot_fewshot" not in result_task
+                        and "direct" not in result_task
+                    ):
                         print(f"{result_task:<30} {data['value']:.4f}")
                         found = True
                         break
 
     print("-" * 45)
+
 
 def save_csv(results, output_file="results_summary.csv"):
     """Save as CSV format"""
@@ -160,6 +180,7 @@ def save_csv(results, output_file="results_summary.csv"):
             data = results[task]
             writer.writerow([task, data["metric"], data["value"]])
     print(f"\nResults saved to {output_file}")
+
 
 if __name__ == "__main__":
     import sys
