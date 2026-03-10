@@ -2,8 +2,8 @@
 set -e
 
 # Arguments
-MODEL_PATH=${1:?"Please provide model path, e.g.: ./run_eval_qwen3_4b.sh /workspace/Qwen3-4B/ hf_xxx"}
-HF_TOKEN=${2:?"Please provide HF_TOKEN, e.g.: ./run_eval_qwen3_4b.sh /workspace/Qwen3-4B/ hf_xxx"}
+MODEL_PATH=${1:?"Please provide model path, e.g.: ./run_eval.sh /workspace/Qwen3-4B/ hf_xxx"}
+HF_TOKEN=${2:?"Please provide HF_TOKEN, e.g.: ./run_eval.sh /workspace/Qwen3-4B/ hf_xxx"}
 
 # Environment variables
 export HF_ENDPOINT=https://hf-mirror.com            # China mirror (can be removed for overseas)
@@ -35,43 +35,39 @@ declare -A SPECIAL_TASKS=(
 for task in "${!TASKS_FEWSHOT[@]}"; do
     fewshot=${TASKS_FEWSHOT[$task]}
     echo ""
-    echo "=== Evaluating task: $task (num_fewshot=$fewshot) ==="
+    echo "=== Evaluating task: ${task} (num_fewshot=${fewshot}) ==="
 
-    lm_eval --model vllm \
-        --model_args trust_remote_code=True,pretrained=${MODEL_PATH},enforce_eager=True \
-        --tasks $task \
+    if ! lm_eval --model vllm \
+        --model_args "trust_remote_code=True,pretrained=${MODEL_PATH},enforce_eager=True" \
+        --tasks "${task}" \
         --batch_size 8 \
         --trust_remote_code \
         --output_path output \
-        --num_fewshot $fewshot \
-        --confirm_run_unsafe_code
-
-    if [ $? -ne 0 ]; then
-        echo "Task $task evaluation failed!"
+        --num_fewshot "${fewshot}" \
+        --confirm_run_unsafe_code; then
+        echo "Task ${task} evaluation failed!"
         exit 1
     fi
-    echo "=== Task $task completed ==="
+    echo "=== Task ${task} completed ==="
 done
 
 # Run special tasks (need to specify subtasks)
 for task in "${!SPECIAL_TASKS[@]}"; do
     subtasks=${SPECIAL_TASKS[$task]}
     echo ""
-    echo "=== Evaluating task: $task ($subtasks) ==="
+    echo "=== Evaluating task: ${task} (${subtasks}) ==="
 
-    lm_eval --model vllm \
-        --model_args trust_remote_code=True,pretrained=${MODEL_PATH},enforce_eager=True \
-        --tasks $subtasks \
+    if ! lm_eval --model vllm \
+        --model_args "trust_remote_code=True,pretrained=${MODEL_PATH},enforce_eager=True" \
+        --tasks "${subtasks}" \
         --batch_size 8 \
         --trust_remote_code \
         --output_path output \
-        --confirm_run_unsafe_code
-
-    if [ $? -ne 0 ]; then
-        echo "Task $task evaluation failed!"
+        --confirm_run_unsafe_code; then
+        echo "Task ${task} evaluation failed!"
         exit 1
     fi
-    echo "=== Task $task completed ==="
+    echo "=== Task ${task} completed ==="
 done
 
 echo ""

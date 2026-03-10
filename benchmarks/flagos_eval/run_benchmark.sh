@@ -2,11 +2,11 @@
 set -e
 
 # Arguments
-MODEL_PATH=${1:?"Please provide model path, e.g.: ./run_bench_qwen3_4b.sh /workspace/Qwen3-4B/"}
+MODEL_PATH=${1:?"Please provide model path, e.g.: ./run_benchmark.sh /workspace/Qwen3-4B/"}
 
 # Output directory
 OUTPUT_DIR=bench_results
-mkdir -p $OUTPUT_DIR
+mkdir -p "${OUTPUT_DIR}"
 
 echo "=== Starting benchmark for model: ${MODEL_PATH} ==="
 echo "Results will be saved to: ${OUTPUT_DIR}/"
@@ -39,13 +39,13 @@ for scenario in "${!THROUGHPUT_SCENARIOS[@]}"; do
     echo "--- Throughput: ${scenario} (input=${input_len}, output=${output_len}, prompts=${num_prompts}) ---"
 
     vllm bench throughput \
-        --model ${MODEL_PATH} \
-        --input-len ${input_len} \
-        --output-len ${output_len} \
-        --num-prompts ${num_prompts} \
+        --model "${MODEL_PATH}" \
+        --input-len "${input_len}" \
+        --output-len "${output_len}" \
+        --num-prompts "${num_prompts}" \
         --trust-remote-code \
         --dtype auto \
-        --output-json ${output_file}
+        --output-json "${output_file}"
 
     echo "Saved: ${output_file}"
 done
@@ -64,14 +64,14 @@ for scenario in "${!LATENCY_SCENARIOS[@]}"; do
     echo "--- Latency: ${scenario} (input=${input_len}, output=${output_len}, batch=${batch_size}, iters=${num_iters}) ---"
 
     vllm bench latency \
-        --model ${MODEL_PATH} \
-        --input-len ${input_len} \
-        --output-len ${output_len} \
-        --batch-size ${batch_size} \
-        --num-iters ${num_iters} \
+        --model "${MODEL_PATH}" \
+        --input-len "${input_len}" \
+        --output-len "${output_len}" \
+        --batch-size "${batch_size}" \
+        --num-iters "${num_iters}" \
         --trust-remote-code \
         --dtype auto \
-        --output-json ${output_file}
+        --output-json "${output_file}"
 
     echo "Saved: ${output_file}"
 done
@@ -81,10 +81,10 @@ echo "==================== BENCHMARK COMPLETED ===================="
 echo "All results saved to: ${OUTPUT_DIR}/"
 echo ""
 echo "Files generated:"
-ls -la ${OUTPUT_DIR}/*.json
+ls -la "${OUTPUT_DIR}"/*.json
 
 # Collect and summarize results
 echo ""
 echo "=== Collecting benchmark results... ==="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-python3 "${SCRIPT_DIR}/collect_bench_results.py" ${OUTPUT_DIR}
+python3 "${SCRIPT_DIR}/collect_bench_results.py" "${OUTPUT_DIR}"

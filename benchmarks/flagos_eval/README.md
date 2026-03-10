@@ -14,7 +14,7 @@ Evaluation toolkit for large language models with LM Eval and vLLM Benchmark.
 ### 2. Run Evaluation
 
 ```bash
-cd flagos_eval
+cd benchmarks/flagos_eval
 
 # LM Evaluation (~35 minutes)
 ./run_eval.sh /path/to/model/ hf_xxxxxxxxxxxxx
