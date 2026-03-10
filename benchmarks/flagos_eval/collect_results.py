@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Collect lm_eval evaluation results and output summary"""
 
-import json
-import glob
-import os
 import csv
+import glob
+import json
+import os
 
 # Define preferred metrics for each dataset
 DATASET_METRICS = {
@@ -41,9 +41,8 @@ def get_preferred_metric(task_name, metrics_dict):
 
     # Try exact match first
     for dataset, metric in DATASET_METRICS.items():
-        if dataset in task_lower:
-            if metric in metrics_dict:
-                return metric, metrics_dict[metric]
+        if dataset in task_lower and metric in metrics_dict:
+            return metric, metrics_dict[metric]
 
     # Fallback to generic matching
     for key in ["exact_match", "acc", "pass@1", "pass_at_1"]:
@@ -144,11 +143,11 @@ def print_results(results):
             else:
                 # Try to match results containing task name
                 for result_task, data in results.items():
-                    if task in result_task.lower() and result_task.count("_") <= task.count("_") + 1:
-                        if "cot_fewshot" not in result_task and "direct" not in result_task:
-                            print(f"{result_task:<30} {data['value']:.4f}")
-                            found = True
-                            break
+                    if (task in result_task.lower() and result_task.count("_") <= task.count("_") + 1
+                            and "cot_fewshot" not in result_task and "direct" not in result_task):
+                        print(f"{result_task:<30} {data['value']:.4f}")
+                        found = True
+                        break
 
     print("-" * 45)
 

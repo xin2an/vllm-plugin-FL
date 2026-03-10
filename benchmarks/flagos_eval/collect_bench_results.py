@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Collect and summarize vLLM benchmark results"""
 
-import json
-import glob
-import os
 import csv
+import glob
+import json
+import os
 from pathlib import Path
 
 def load_json(path):
