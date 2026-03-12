@@ -50,6 +50,10 @@ def fi_chunk_gated_delta_rule(
     # Unsqueeze back to 4D (1, L, H, D) to match fla output format
     return output.unsqueeze(0), final_state
 
+if "chunk_gated_delta_rule" in CustomOp.op_registry:
+    del CustomOp.op_registry["chunk_gated_delta_rule"]
+    logger.info_once(f"Overriding vLLM's {"chunk_gated_delta_rule"} with vllm-fl implementation")
+
 @CustomOp.register("chunk_gated_delta_rule")
 class ChunkGatedDeltaRuleOp(CustomOp):
     def __init__(self) -> None:
