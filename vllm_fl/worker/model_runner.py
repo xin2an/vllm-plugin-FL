@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 import functools
 import gc
 import itertools
@@ -25,7 +26,7 @@ import vllm.envs as envs
 from vllm.attention.backends.abstract import(
     AttentionBackend,
     AttentionMetadata,
-    AttentionType, 
+    AttentionType,
     MultipleOf)
 from vllm.attention.layer import Attention, MLAAttention
 from vllm.compilation.counter import compilation_counter
@@ -217,6 +218,32 @@ from vllm_fl.compilation.graph import GraphWrapper
 
 logger = init_logger(__name__)
 
+# ── IO inspect/dump step tracking ──
+# Cached references resolved on first call; thereafter a single bool check
+# per execute_model call when IO features are disabled.
+_io_advance_step = None
+_io_inspect_enabled = None
+_io_dump_enabled = None
+
+
+def _maybe_advance_io_step() -> None:
+    """Advance the IO step counter if IO inspect or dump is active.
+
+    Lazy-imports on first call to avoid import-time overhead.
+    Subsequent calls cost one bool-check each when features are off.
+    """
+    global _io_advance_step, _io_inspect_enabled, _io_dump_enabled
+    if _io_advance_step is None:
+        from vllm_fl.dispatch.io_common import advance_step
+        from vllm_fl.dispatch.io_inspector import is_inspect_enabled
+        from vllm_fl.dispatch.io_dumper import is_dump_enabled
+        _io_advance_step = advance_step
+        _io_inspect_enabled = is_inspect_enabled
+        _io_dump_enabled = is_dump_enabled
+    if _io_inspect_enabled() or _io_dump_enabled():
+        _io_advance_step()
+
+
 AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
 # list when ubatching is enabled
 PerLayerAttnMetadata: TypeAlias = list[AttnMetadataDict] | AttnMetadataDict
@@ -262,7 +289,7 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
 
     def get_output(self) -> ModelRunnerOutput:
         """Copy the device tensors to the host and return a ModelRunnerOutput.
-        
+
         This function blocks until the copy is finished.
         """
         max_gen_len = self.sampled_token_ids_cpu.shape[-1]
@@ -3191,6 +3218,11 @@ class ModelRunnerFL(
             cudagraph_stats,
         )
         self.kv_connector_output = kv_connector_output
+
+        # Advance IO step after the forward pass completes so that
+        # step 0 = first forward, step 1 = second forward, etc.
+        _maybe_advance_io_step()
+
         return None
 
     @torch.inference_mode
@@ -3694,6 +3726,30 @@ class ModelRunnerFL(
             time_after_load - time_before_load,
             scope="local",
         )
+
+        # Always register module paths — cheap (one pass over named_modules)
+        # and required by all three IO configuration methods (env vars, YAML,
+        # and the Python API) for layer-path filtering to work.
+        from vllm_fl.dispatch.io_common import register_module_paths, set_eager_mode
+        register_module_paths(self.model)
+        # Tell the IO system whether torch.compile will be used so it can
+        # skip global module hooks that interfere with AOT autograd.
+        set_eager_mode(getattr(self.model_config, "enforce_eager", False))
+        # Initialize IO inspector/dumper from env vars or YAML config.
+        # This must happen AFTER set_eager_mode() so _activate_hooks() knows
+        # whether to register global module hooks (incompatible with torch.compile).
+        _io_env_prefixes = ("VLLM_FL_IO_INSPECT", "VLLM_FL_IO_DUMP",
+                            "VLLM_FL_IO_STEP_RANGE", "VLLM_FL_IO_LAYERS",
+                            "VLLM_FL_IO_RANK")
+        _io_requested = any(
+            k.startswith(_io_env_prefixes) for k in os.environ
+        ) or os.environ.get("VLLM_FL_CONFIG", "").strip()
+        if _io_requested:
+            from vllm_fl.dispatch.io_inspector import _init_from_env as _init_inspect
+            from vllm_fl.dispatch.io_dumper import _init_from_env as _init_dump
+            _init_inspect()
+            _init_dump()
+
         prepare_communication_buffer_for_model(self.model)
         if (drafter := getattr(self, "drafter", None)) and (
             drafter_model := getattr(drafter, "model", None)
