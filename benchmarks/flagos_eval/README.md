@@ -7,6 +7,14 @@ Evaluation toolkit for large language models with LM Eval and vLLM Benchmark.
 ### 1. Dependencies
 
 - [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)
+    ```bash
+    git clone [https://github.com/EleutherAI/lm-evaluation-harness.git](https://github.com/EleutherAI/lm-evaluation-harness.git)
+    cd lm-evaluation-harness
+    git checkout ee7e8f4fe58e13d6760c066474f0d01477317d1d
+    pip install -e .
+    pip install "lm_eval[hf,vllm,api]"
+    pip install datasets==2.14.7
+    ```
 - [vllm](https://github.com/vllm-project/vllm)
 - [vllm-plugin-FL](https://github.com/flagos-ai/vllm-plugin-FL)
 - Python 3.10+
