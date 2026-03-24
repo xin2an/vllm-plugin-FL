@@ -8,7 +8,7 @@ Evaluation toolkit for large language models with LM Eval and vLLM Benchmark.
 
 - [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness)
     ```bash
-    git clone [https://github.com/EleutherAI/lm-evaluation-harness.git](https://github.com/EleutherAI/lm-evaluation-harness.git)
+    git clone https://github.com/EleutherAI/lm-evaluation-harness.git
     cd lm-evaluation-harness
     git checkout ee7e8f4fe58e13d6760c066474f0d01477317d1d
     pip install -e .
