@@ -61,8 +61,8 @@ Output Files:
 flagos_eval/
 ├── run_eval.sh                  # LM evaluation script
 ├── run_benchmark.sh             # Performance benchmark script
-├── collect_results.py           # LM evaluation result collector
-├── collect_bench_results.py     # Performance benchmark result collector
+├── collect_eval_results.py           # LM evaluation result collector
+├── collect_benchmark_results.py     # Performance benchmark result collector
 ├── output/                      # LM evaluation results
 ├── bench_results/               # Performance benchmark results
 ├── results_summary.csv          # LM evaluation summary

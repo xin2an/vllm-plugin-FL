@@ -87,4 +87,4 @@ ls -la "${OUTPUT_DIR}"/*.json
 echo ""
 echo "=== Collecting benchmark results... ==="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-python3 "${SCRIPT_DIR}/collect_bench_results.py" "${OUTPUT_DIR}"
+python3 "${SCRIPT_DIR}/collect_benchmark_results.py" "${OUTPUT_DIR}"

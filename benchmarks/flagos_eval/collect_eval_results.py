@@ -58,7 +58,7 @@ def get_preferred_metric(task_name, metrics_dict):
     return None, None
 
 
-def collect_results(output_dir="output"):
+def collect_eval_results(output_dir="output"):
     """Collect all evaluation results"""
     results = {}
 
@@ -187,7 +187,7 @@ if __name__ == "__main__":
 
     output_dir = sys.argv[1] if len(sys.argv) > 1 else "output"
 
-    results = collect_results(output_dir)
+    results = collect_eval_results(output_dir)
     if results:
         print_results(results)
         save_csv(results)
