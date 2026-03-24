@@ -40,7 +40,7 @@ for task in "${!TASKS_FEWSHOT[@]}"; do
     if ! lm_eval --model vllm \
         --model_args "trust_remote_code=True,pretrained=${MODEL_PATH},enforce_eager=True" \
         --tasks "${task}" \
-        --batch_size 8 \
+        --batch_size auto \
         --trust_remote_code \
         --output_path output \
         --num_fewshot "${fewshot}" \
@@ -60,7 +60,7 @@ for task in "${!SPECIAL_TASKS[@]}"; do
     if ! lm_eval --model vllm \
         --model_args "trust_remote_code=True,pretrained=${MODEL_PATH},enforce_eager=True" \
         --tasks "${subtasks}" \
-        --batch_size 8 \
+        --batch_size auto \
         --trust_remote_code \
         --output_path output \
         --confirm_run_unsafe_code; then
