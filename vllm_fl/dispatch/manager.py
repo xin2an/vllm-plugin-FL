@@ -29,6 +29,48 @@ logger = logging.getLogger(__name__)
 # Debug printing control
 _DISPATCH_DEBUG = os.getenv("VLLM_FL_DISPATCH_DEBUG", "0") == "1"
 
+# Record which dispatch-level ops are used into the FlagGems oplist file,
+# so users can inspect runtime op usage in one place.
+_FLAGOS_OPLIST_LOCK = threading.Lock()
+_RECORDED_FLAGOS_OPS: Set[Tuple[str, str]] = set()  # (op_name, impl_id)
+
+
+def _record_default_flagos_op(op_name: str, impl: OpImpl) -> None:
+    """Record dispatch-level op usage into the FlagGems oplist file.
+
+    Writes through the FlagGems logger's file handlers directly so that the
+    record goes via the same file descriptor that FlagGems itself uses.  This
+    avoids a file-position race between two independent file descriptors (the
+    old ``open(path, "a+")`` approach vs FlagGems' ``FileHandler(mode="w")``)
+    that caused dispatch entries to be silently overwritten in short-lived
+    processes such as offline inference.
+    """
+    key = (op_name, impl.impl_id)
+    with _FLAGOS_OPLIST_LOCK:
+        if key in _RECORDED_FLAGOS_OPS:
+            return
+        try:
+            fg_logger = logging.getLogger("flag_gems")
+            line = (
+                f"[DEBUG] vllm_fl.dispatch.ops.{op_name}: {impl.impl_id}"
+            )
+            # Write directly through each FlagGems-owned FileHandler so
+            # that the file position stays synchronised with FlagGems'
+            # own writes.  Using ``logger.debug()`` would prepend an
+            # unwanted ``[DEBUG] flag_gems.<funcName>:`` prefix added by
+            # the handler's formatter.
+            for handler in fg_logger.handlers:
+                if (
+                    isinstance(handler, logging.FileHandler)
+                    and getattr(handler, "_flaggems_owned", False)
+                ):
+                    handler.stream.write(line + "\n")
+                    handler.stream.flush()
+            _RECORDED_FLAGOS_OPS.add(key)
+        except Exception:
+            # Never break inference/serving due to diagnostics I/O.
+            return
+
 
 @dataclass
 class _OpManagerState:
@@ -485,6 +527,8 @@ class OpManager:
                                         f"Op '{op_name}' switched from '{last_impl_id}' to '{impl_id}' "
                                         f"(kind={impl.kind.value}, vendor={impl.vendor})"
                                     )
+                                if impl.kind == BackendImplKind.DEFAULT:
+                                    _record_default_flagos_op(op_name, impl)
                                 break
                         self._called_ops[op_name] = impl_id
 
@@ -526,6 +570,8 @@ class OpManager:
                                         f"Op '{op_name}' switched from '{last_impl_id}' to '{impl.impl_id}' "
                                         f"(kind={impl.kind.value}, vendor={impl.vendor})"
                                     )
+                                if impl.kind == BackendImplKind.DEFAULT:
+                                    _record_default_flagos_op(op_name, impl)
                                 self._called_ops[op_name] = impl.impl_id
                 else:
                     # Always log fallback attempts (these are important runtime events)
@@ -540,6 +586,8 @@ class OpManager:
                 if idx > 0:
                     with self._lock:
                         self._called_ops[op_name] = impl.impl_id
+                if impl.kind == BackendImplKind.DEFAULT:
+                    _record_default_flagos_op(op_name, impl)
 
                 return result
 
