@@ -9,10 +9,9 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List
 
 
-def load_json(path: str) -> Dict:
+def load_json(path: str) -> dict:
     """Load JSON file."""
     try:
         with open(path, "r") as f:
@@ -22,7 +21,7 @@ def load_json(path: str) -> Dict:
         return None
 
 
-def extract_metrics(data: Dict) -> Dict:
+def extract_metrics(data: dict) -> dict:
     """Extract throughput metrics from benchmark result."""
     return {
         "num_prompts": data.get("num_requests") or data.get("num_prompts"),
@@ -33,7 +32,7 @@ def extract_metrics(data: Dict) -> Dict:
     }
 
 
-def parse_scenario_name(filename: str) -> Dict:
+def parse_scenario_name(filename: str) -> dict:
     """
     Parse scenario name to extract input/output lengths.
     Example: throughput_1k_1k.json -> {input: 1024, output: 1024}
@@ -56,7 +55,7 @@ def parse_scenario_name(filename: str) -> Dict:
     return {"name": name, "input_len": 0, "output_len": 0}
 
 
-def collect_results(results_dir: str) -> List[Dict]:
+def collect_results(results_dir: str) -> list[dict]:
     """Collect all benchmark results from directory."""
     files = sorted(glob.glob(os.path.join(results_dir, "throughput_*.json")))
 
@@ -81,7 +80,7 @@ def collect_results(results_dir: str) -> List[Dict]:
     return results
 
 
-def print_detailed_results(results: List[Dict], seed: str):
+def print_detailed_results(results: list[dict], seed: str):
     """Print detailed results for each test configuration."""
     print("\n" + "=" * 100)
     print(f"MIXED-LENGTH BENCHMARK RESULTS (Seed: {seed})")
@@ -130,7 +129,7 @@ def print_detailed_results(results: List[Dict], seed: str):
     print("=" * 100)
 
 
-def print_summary(results: List[Dict], seed: str):
+def print_summary(results: list[dict], seed: str):
     """Print summary statistics."""
     if not results:
         return
@@ -143,39 +142,39 @@ def print_summary(results: List[Dict], seed: str):
     total_tokens = sum(r['total_tokens'] or 0 for r in results)
     total_time = sum(r['elapsed_time'] or 0 for r in results)
 
-    print(f"\nDataset Information:")
+    print("\nDataset Information:")
     print(f"  Seed: {seed}")
     print(f"  Total samples: {total_samples}")
     print(f"  Input length range: {min(r['input_len'] for r in results)} - {max(r['input_len'] for r in results)} tokens")
 
-    print(f"\nLength Distribution:")
+    print("\nLength Distribution:")
     for r in sorted(results, key=lambda x: x['input_len']):
         print(f"  {r['input_len']:>6}/{r['output_len']:<6} tokens: {r['num_prompts']:>4} samples")
 
     overall_tokens_per_sec = total_tokens / total_time if total_time > 0 else 0
     overall_req_per_sec = total_samples / total_time if total_time > 0 else 0
 
-    print(f"\nOverall Performance:")
+    print("\nOverall Performance:")
     print(f"  Total tokens generated: {total_tokens:,}")
     print(f"  Total elapsed time: {total_time:.2f}s")
     print(f"  Overall throughput: {overall_tokens_per_sec:.2f} tokens/s")
     print(f"  Overall request rate: {overall_req_per_sec:.2f} req/s")
 
-    print(f"\nPer-Length Performance:")
+    print("\nPer-Length Performance:")
     for r in sorted(results, key=lambda x: x['input_len']):
         print(f"  {r['name']:<12} {r['tokens_per_sec'] or 0:>10.2f} tokens/s")
 
     best = max(results, key=lambda x: x['tokens_per_sec'] or 0)
     worst = min(results, key=lambda x: x['tokens_per_sec'] or 0)
 
-    print(f"\nPerformance Range:")
+    print("\nPerformance Range:")
     print(f"  Best:  {best['name']:<12} {best['tokens_per_sec']:>10.2f} tokens/s")
     print(f"  Worst: {worst['name']:<12} {worst['tokens_per_sec']:>10.2f} tokens/s")
 
     print("=" * 100)
 
 
-def export_csv(results: List[Dict], seed: str, output_file: str):
+def export_csv(results: list[dict], seed: str, output_file: str):
     """Export results to CSV file."""
     if not results:
         return
@@ -221,7 +220,7 @@ def export_csv(results: List[Dict], seed: str, output_file: str):
     print(f"\nResults exported to: {output_file}")
 
 
-def export_json(results: List[Dict], seed: str, output_file: str):
+def export_json(results: list[dict], seed: str, output_file: str):
     """Export results to JSON file."""
     if not results:
         return
